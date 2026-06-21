@@ -1,0 +1,16 @@
+# Build artifacts
+CMakeFiles/
+CMakeCache.txt
+Makefile
+cmake_install.cmake
+boopbot_autogen/
+.qt/
+boopbot
+
+# Backup files from debugging sessions
+*.bak
+*.bak2
+
+# Core dumps
+*.core
+cores/
