@@ -1516,3 +1516,198 @@ Given `camera_example3_viewfinder` (the official QNX binary) reportedly worked s
 1. Re-run `camera_example3_viewfinder` fresh right now (sensor service running, no boopbot interference) to confirm whether IT still works cleanly on this image -- if yes, diff its approach (Screen window creation enabled, default CREATEWINDOW=1, not 0) against ours more carefully; the working binary may rely on letting camapi manage its OWN internal Screen window fully (CREATEWINDOW left at default/1) rather than us setting CREATEWINDOW=0 and trying to manage Streams ourselves, which may be the actual unstable code path on this specific camapi build.
 2. If default CREATEWINDOW=1 is more stable, pivot back to callback-window mode but instead of pulling frames via a per-frame data callback (which separately also fails with err=13 permission denied, a DIFFERENT bug from this stream_cleanup one), try capturing the auto-created viewfinder window's buffer directly via Screen APIs (screen_get_window_property_pv for SCREEN_PROPERTY_RENDER_BUFFERS) on a QTimer poll, without ever registering our own competing Screen window/context -- i.e. let camapi own 100% of the Screen interaction, and we just peek at its window's buffer externally.
 3. Consider contacting QNX support/Discord with the exact two confirmed bugs (err=13 permission denied on callback attach; err=22 stream_cleanup crash in stream mode) referencing QNXE-1351, since both increasingly look like platform-level Sensor Framework bugs specific to RPi4 + Camera Module 3 on this QNX Everywhere image build, not application code issues.
+
+---
+
+# PART 9 — Fresh Image + Sensor Framework 8.0.4 = Camera Working (June 24, 2026)
+
+## Summary
+
+After months of debugging two confirmed QNX platform bugs (err=13 callback IPC permission denied, err=22 stream_cleanup crash), the root cause was finally isolated and fixed by:
+1. Flashing the latest QSTI (build 297, June 6 2026) via QNX Software Center
+2. Installing `qnx-sensor-framework 8.0.4` via `apk` on the new image
+3. Using the new RPi4-specific sensor config `/usr/etc/config/sensor/rpi4_camera_module3.conf`
+4. Replacing our hand-reconstructed `camera_api.h` with the real SDK headers (also installed via apk)
+
+Result: `camera_start_viewfinder` with a real callback function now succeeds. CAMERA STATUS shows "Camera streaming". The CAMERA FEED panel shows a live, real-time feed from the Pi Camera Module 3.
+
+---
+
+## Step-by-step of what happened
+
+### 9.1 — Confirming the old image version
+
+Old image was `QNXOS_802_B2005` (Nov 2024, build 2005), confirmed by:
+```sh
+use -i /system/bin/qconn | grep VERSION
+# Returns: VERSION=QNXOS_802_B2005
+```
+
+The latest QSTI available was build 297 (June 6 2026). Found in the **Updates (18)** tab of QNX Software Center under Reference Images → QNX® SDP 8.0 Quick Start Target Image for RPi4.
+
+Note: The QSC installed the new image into `~/qnx/SDP/qnx800_2/` not `qnx800_1` — confirm path before flashing.
+
+### 9.2 — Flashing the new image
+
+Flashed with Raspberry Pi Imager:
+- Device: Raspberry Pi 4
+- OS: Use Custom → `~/qnx/SDP/qnx800_2/images/rpi4/rpi4/rpi4.img`
+- Storage: SD card
+- OS Customisation: **No** (critical)
+- Confirm: Yes
+
+After flashing, build date confirmed via:
+```sh
+cat /proc/boot/build.date
+# Returns: 2026-06-06T15:56:54-04:00
+```
+
+Note: `use -i /system/bin/qconn | grep VERSION` still reports `QNXOS_802_B2005` — this is a quirk of that utility (it reflects the SDP version it was compiled against, not the image build). The `build.date` file is the authoritative source.
+
+### 9.3 — Post-flash setup
+
+```sh
+# Clear stale SSH host key on Fedora host first
+ssh-keygen -R anakafeelqnxpi.local
+
+# On the Pi: generate new SSH key for GitHub
+ssh-keygen -t ed25519 -C "boopbot-qnx-pi-build297" -f ~/.ssh/id_ed25519 -N ""
+cat ~/.ssh/id_ed25519.pub
+# Add to github.com/settings/keys → New SSH key (SSH type, not GPG)
+
+ssh -T git@github.com  # verify: "Hi anakafeel!"
+
+# Clone repo
+cd /data/home/qnxuser
+git clone git@github.com:anakafeel/QT_BOOPBOT.git boopbot
+cd boopbot
+
+# Install Qt
+apk add qt6-base qt6-base-dev qt6-declarative qt6-declarative-dev qt6-wayland
+```
+
+### 9.4 — Installing the sensor framework packages (THE FIX)
+
+This is the critical step. The old QSTI did not include these:
+
+```sh
+apk add qnx-sensor-framework \
+        qnx-sensor-framework-dev \
+        qnx-sensor-framework-camera-imx708 \
+        qnx-sensor-framework-camera-imx708-demo \
+        qnx-sensor-framework-utils
+```
+
+What this installs:
+- `qnx-sensor-framework 8.0.4` — fixed sensor framework with working callback IPC
+- `qnx-sensor-framework-dev 8.0.4` — **real camera headers** at `/usr/include/camera/`
+- `qnx-sensor-framework-camera-imx708 8.0.4` — imx708 driver at `/usr/lib/libimx708_external_camera.so`
+- New sensor configs at `/usr/etc/config/sensor/` including `rpi4_camera_module3.conf`
+- `sensor_example` binary (new, not in old image)
+- `qnx-multimedia-framework 8.0.4` (pulled in as dependency)
+
+### 9.5 — Key differences in the new sensor config
+
+Old config (`/system/etc/config/sensor/camera_module3.conf`):
+```
+address = /system/lib/libimx708_external_camera.so,1   ← old/broken library
+default_video_format = bgr8888
+# No algorithm_config
+```
+
+New RPi4-specific config (`/usr/etc/config/sensor/rpi4_camera_module3.conf`):
+```
+address = /usr/lib/libimx708_external_camera.so,1           ← fixed 8.0.4 library
+default_video_format = nv12                                  ← matches our NV12 conversion
+algorithm_config = /usr/etc/config/sensor/rpi4_algorithm_imx708.json, imx708
+```
+
+The old config pointed to `/system/lib/` which had the buggy library. The new config correctly points to `/usr/lib/` which has the fixed 8.0.4 library.
+
+Updated `run.sh` sensor launch:
+```sh
+# Old (broken):
+sensor -U 521:521 -b external -r /data/share/sensor -c /system/etc/config/sensor/camera_module3.conf &
+
+# New (working):
+sensor -U 521:521 -b external -r /data/share/sensor -c /usr/etc/config/sensor/rpi4_camera_module3.conf &
+```
+
+### 9.6 — Replacing the hand-reconstructed camera_api.h
+
+The old image shipped no camera development headers. The new `qnx-sensor-framework-dev` package installs real headers at:
+- `/usr/include/camera/camera_api.h`
+- `/usr/include/camera/camera_defs.h`
+- `/usr/include/camera/camera_config.h`
+- `/usr/include/camera/camera_extended.h`
+- `/usr/include/camera/camera_image_attr.h`
+
+Replaced our hand-reconstructed `camera_api.h` with a redirect:
+```cpp
+// camera_api.h — now just a redirect to real headers
+#pragma once
+#include <camera/camera_api.h>
+#include <camera/camera_defs.h>
+#include <camera/camera_config.h>
+```
+
+The real `camera_buffer_t` struct field names (`frametype`, `framebuf`, `framedesc`) turned out to match our original guesses. The bug was entirely in the sensor framework library, not our struct field access.
+
+Also updated `camera_provider.h` to use `CAMERA_HANDLE_INVALID` instead of `-1` for handle initialisation.
+
+### 9.7 — Final working camera_provider.cpp flow
+
+```cpp
+void CameraWorker::start() {
+    emit statusChanged("Opening camera...");
+    camera_open(CAMERA_UNIT_1, CAMERA_MODE_RW | CAMERA_MODE_ROLL, &m_handle); // err=0
+    camera_set_vf_mode(m_handle, (camera_vfmode_t)5);                         // err=0, mode 5 = default
+    m_running = true;
+    camera_start_viewfinder(m_handle, viewfinderCallback, nullptr, this);     // err=0 ✓ WORKS
+    emit statusChanged("Camera streaming");
+}
+```
+
+Callback fires with `camera_buffer_t*` containing NV12 frames at 2304x1296. NV12→QImage conversion in `processFrame` works correctly. `frameReady()` signal triggers QML image refresh via `image://camera/frame?N` URL pattern.
+
+### 9.8 — MESA GPU memory exhaustion (cosmetic, fix: reboot)
+
+After multiple crash cycles during the testing session, GPU memory got exhausted:
+```
+MESA: error: Failed to allocate device memory for BO
+Screen display dpy-1 not found!
+Abort (core dumped)
+```
+Fix: full reboot of the Pi (`reboot` or physically power-cycle). After reboot, camera streams live with no issues.
+
+### 9.9 — Complete working setup checklist (fresh QSTI build 297)
+
+```sh
+# 1. Install Qt
+apk add qt6-base qt6-base-dev qt6-declarative qt6-declarative-dev qt6-wayland
+
+# 2. Install sensor framework (THE CRITICAL STEP)
+apk add qnx-sensor-framework qnx-sensor-framework-dev \
+        qnx-sensor-framework-camera-imx708 \
+        qnx-sensor-framework-camera-imx708-demo \
+        qnx-sensor-framework-utils
+
+# 3. Clone and build
+git clone git@github.com:anakafeel/QT_BOOPBOT.git boopbot
+cd boopbot
+./build.sh
+
+# 4. Run
+./run.sh
+```
+
+### 9.10 — Root cause summary table
+
+| Bug | Error code | Root cause | Fix |
+|-----|-----------|------------|-----|
+| `camera_start_viewfinder` fails with callback | err=13 Permission denied | Broken callback IPC in sensor framework ≤8.0.2 | Install `qnx-sensor-framework 8.0.4` via apk |
+| Stream mode crash | err=22 stream_cleanup | Internal camapi stream/context teardown bug in old libs | Same — fixed in 8.0.4 |
+| Wrong library loaded by sensor service | Silent failure / wrong behaviour | Old config pointed to `/system/lib/` (buggy), not `/usr/lib/` (fixed 8.0.4) | Use `rpi4_camera_module3.conf` |
+| Wrong enum values / type mismatches | Various err=22 | Hand-reconstructed `camera_api.h` with guessed values | Use real headers from `qnx-sensor-framework-dev` |
+| GPU memory exhaustion after testing | MESA BO alloc errors, abort | Multiple crash cycles leak GPU memory | Reboot the Pi |
+
