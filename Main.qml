@@ -8,9 +8,8 @@ Window {
     height: 480
     visible: true
     title: "BOOPBOT"
-    color: "#0a0a0a"
+    color: "#12091e"
 
-    // Refresh camera feed
     property int frameCounter: 0
 
     Connections {
@@ -32,34 +31,44 @@ Window {
         anchors.left: parent.left
         anchors.right: parent.right
         height: 50
-        color: "#0d0d0d"
-        border.color: "#00ff41"
+        color: "#1a0f2e"
+        border.color: "#7c3aed"
         border.width: 1
 
         Row {
             anchors.left: parent.left
-            anchors.leftMargin: 16
+            anchors.leftMargin: 12
             anchors.verticalCenter: parent.verticalCenter
             spacing: 10
 
+            // CUHacking logo
+            Image {
+                width: 32
+                height: 32
+                source: "file:///data/home/qnxuser/boopbot/icon_purple.png"
+                fillMode: Image.PreserveAspectFit
+                anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Text {
+                text: "BOOPBOT v1.0"
+                color: "#a78bfa"
+                font.family: "monospace"
+                font.pixelSize: 18
+                font.bold: true
+                font.letterSpacing: 3
+            }
+
             Rectangle {
-                width: 10; height: 10
-                radius: 5
-                color: "#00ff41"
+                width: 8; height: 8
+                radius: 4
+                color: "#8b5cf6"
+                anchors.verticalCenter: parent.verticalCenter
                 SequentialAnimation on opacity {
                     loops: Animation.Infinite
                     NumberAnimation { to: 0.2; duration: 800 }
                     NumberAnimation { to: 1.0; duration: 800 }
                 }
-            }
-
-            Text {
-                text: "BOOPBOT v1.0"
-                color: "#00ff41"
-                font.family: "monospace"
-                font.pixelSize: 18
-                font.bold: true
-                font.letterSpacing: 3
             }
         }
 
@@ -68,7 +77,7 @@ Window {
             anchors.rightMargin: 16
             anchors.verticalCenter: parent.verticalCenter
             text: Qt.formatDateTime(new Date(), "hh:mm:ss")
-            color: "#00ff41"
+            color: "#a78bfa"
             font.family: "monospace"
             font.pixelSize: 13
             Timer {
@@ -93,8 +102,8 @@ Window {
         Rectangle {
             width: parent.width * 0.65
             height: parent.height
-            color: "#0a0a0a"
-            border.color: "#1a3a1a"
+            color: "#12091e"
+            border.color: "#3b1f6e"
             border.width: 1
 
             Text {
@@ -102,7 +111,7 @@ Window {
                 anchors.topMargin: 10
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: "CAMERA FEED"
-                color: "#00ff41"
+                color: "#a78bfa"
                 font.family: "monospace"
                 font.pixelSize: 11
                 font.letterSpacing: 4
@@ -113,8 +122,8 @@ Window {
                 anchors.centerIn: parent
                 width: parent.width - 32
                 height: parent.height - 48
-                color: "#050505"
-                border.color: "#00ff41"
+                color: "#0a0618"
+                border.color: "#7c3aed"
                 border.width: 1
 
                 Image {
@@ -125,7 +134,6 @@ Window {
                     cache: false
                     source: "image://camera/frame?0"
 
-                    // No signal overlay
                     Rectangle {
                         anchors.fill: parent
                         color: "transparent"
@@ -133,26 +141,35 @@ Window {
 
                         Column {
                             anchors.centerIn: parent
-                            spacing: 6
+                            spacing: 8
 
-                            Text {
+                            // CUHacking logo (pulsing, centered)
+                            Image {
+                                width: 64
+                                height: 64
+                                source: "file:///data/home/qnxuser/boopbot/icon_purple.png"
+                                fillMode: Image.PreserveAspectFit
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                text: "[ NO SIGNAL ]"
-                                color: "#00ff41"
-                                font.family: "monospace"
-                                font.pixelSize: 20
-                                font.bold: true
                                 SequentialAnimation on opacity {
                                     loops: Animation.Infinite
-                                    NumberAnimation { to: 0.3; duration: 600 }
+                                    NumberAnimation { to: 0.4; duration: 600 }
                                     NumberAnimation { to: 1.0; duration: 600 }
                                 }
                             }
 
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
+                                text: "[ NO SIGNAL ]"
+                                color: "#8b5cf6"
+                                font.family: "monospace"
+                                font.pixelSize: 20
+                                font.bold: true
+                            }
+
+                            Text {
+                                anchors.horizontalCenter: parent.horizontalCenter
                                 text: "Initializing camera..."
-                                color: "#005c1a"
+                                color: "#4c1d95"
                                 font.family: "monospace"
                                 font.pixelSize: 13
                             }
@@ -160,34 +177,28 @@ Window {
                     }
                 }
 
-                // Corner brackets
                 Canvas {
                     anchors.fill: parent
                     onPaint: {
                         var ctx = getContext("2d")
-                        ctx.strokeStyle = "#00ff41"
+                        ctx.strokeStyle = "#7c3aed"
                         ctx.lineWidth = 2
                         var s = 16
-                        // TL
                         ctx.beginPath(); ctx.moveTo(0,s); ctx.lineTo(0,0); ctx.lineTo(s,0); ctx.stroke()
-                        // TR
                         ctx.beginPath(); ctx.moveTo(width-s,0); ctx.lineTo(width,0); ctx.lineTo(width,s); ctx.stroke()
-                        // BL
                         ctx.beginPath(); ctx.moveTo(0,height-s); ctx.lineTo(0,height); ctx.lineTo(s,height); ctx.stroke()
-                        // BR
                         ctx.beginPath(); ctx.moveTo(width-s,height); ctx.lineTo(width,height); ctx.lineTo(width,height-s); ctx.stroke()
                     }
                 }
             }
 
-            // FPS counter
             Text {
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: 8
                 anchors.right: parent.right
                 anchors.rightMargin: 24
                 text: "FRAMES: " + root.frameCounter
-                color: "#004d14"
+                color: "#4c1d95"
                 font.family: "monospace"
                 font.pixelSize: 11
             }
@@ -197,8 +208,8 @@ Window {
         Rectangle {
             width: parent.width * 0.35 - 2
             height: parent.height
-            color: "#0a0a0a"
-            border.color: "#1a3a1a"
+            color: "#12091e"
+            border.color: "#3b1f6e"
             border.width: 1
 
             Column {
@@ -206,23 +217,17 @@ Window {
                 anchors.margins: 10
                 spacing: 6
 
-                // Section label
                 Text {
                     text: "SYSTEM CONTROL"
-                    color: "#00ff41"
+                    color: "#a78bfa"
                     font.family: "monospace"
                     font.pixelSize: 11
                     font.letterSpacing: 3
                     opacity: 0.7
                 }
 
-                Rectangle {
-                    width: parent.width
-                    height: 1
-                    color: "#1a3a1a"
-                }
+                Rectangle { width: parent.width; height: 1; color: "#3b1f6e" }
 
-                // API Buttons
                 Repeater {
                     model: [
                         { label: "CAPTURE FRAME",  endpoint: "/api/capture"  },
@@ -235,8 +240,8 @@ Window {
                     delegate: Rectangle {
                         width: parent.width
                         height: 32
-                        color: mouseArea.pressed ? "#003d0f" : (mouseArea.containsMouse ? "#001f07" : "#0d1a0d")
-                        border.color: mouseArea.containsMouse ? "#00ff41" : "#1a3a1a"
+                        color: mouseArea.pressed ? "#3b1f6e" : (mouseArea.containsMouse ? "#2d1657" : "#1a0f2e")
+                        border.color: mouseArea.containsMouse ? "#a78bfa" : "#3b1f6e"
                         border.width: 1
                         radius: 2
 
@@ -248,7 +253,7 @@ Window {
 
                             Text {
                                 text: ">"
-                                color: "#00ff41"
+                                color: "#8b5cf6"
                                 font.family: "monospace"
                                 font.pixelSize: 14
                                 font.bold: true
@@ -257,7 +262,7 @@ Window {
 
                             Text {
                                 text: modelData.label
-                                color: "#00ff41"
+                                color: "#a78bfa"
                                 font.family: "monospace"
                                 font.pixelSize: 13
                                 font.bold: true
@@ -276,15 +281,11 @@ Window {
                     }
                 }
 
-                Rectangle {
-                    width: parent.width
-                    height: 1
-                    color: "#1a3a1a"
-                }
+                Rectangle { width: parent.width; height: 1; color: "#3b1f6e" }
 
                 Text {
                     text: "API RESPONSE"
-                    color: "#00ff41"
+                    color: "#a78bfa"
                     font.family: "monospace"
                     font.pixelSize: 11
                     font.letterSpacing: 3
@@ -294,8 +295,8 @@ Window {
                 Rectangle {
                     width: parent.width
                     height: 50
-                    color: "#050505"
-                    border.color: "#1a3a1a"
+                    color: "#0a0618"
+                    border.color: "#3b1f6e"
                     border.width: 1
                     radius: 2
 
@@ -304,28 +305,24 @@ Window {
                         anchors.fill: parent
                         anchors.margins: 10
                         text: "Awaiting command..."
-                        color: "#00b32d"
+                        color: "#8b5cf6"
                         font.family: "monospace"
                         font.pixelSize: 12
                         wrapMode: Text.Wrap
 
                         SequentialAnimation {
                             id: apiFlash
-                            PropertyAnimation { target: apiResponseLabel; property: "color"; to: "#00ff41"; duration: 100 }
-                            PropertyAnimation { target: apiResponseLabel; property: "color"; to: "#00b32d"; duration: 400 }
+                            PropertyAnimation { target: apiResponseLabel; property: "color"; to: "#a78bfa"; duration: 100 }
+                            PropertyAnimation { target: apiResponseLabel; property: "color"; to: "#8b5cf6"; duration: 400 }
                         }
                     }
                 }
 
-                Rectangle {
-                    width: parent.width
-                    height: 1
-                    color: "#1a3a1a"
-                }
+                Rectangle { width: parent.width; height: 1; color: "#3b1f6e" }
 
                 Text {
                     text: "CAMERA STATUS"
-                    color: "#00ff41"
+                    color: "#a78bfa"
                     font.family: "monospace"
                     font.pixelSize: 11
                     font.letterSpacing: 3
@@ -335,8 +332,8 @@ Window {
                 Rectangle {
                     width: parent.width
                     height: 40
-                    color: "#050505"
-                    border.color: "#1a3a1a"
+                    color: "#0a0618"
+                    border.color: "#3b1f6e"
                     border.width: 1
                     radius: 2
 
@@ -345,7 +342,7 @@ Window {
                         anchors.fill: parent
                         anchors.margins: 10
                         text: "Initializing..."
-                        color: "#00b32d"
+                        color: "#8b5cf6"
                         font.family: "monospace"
                         font.pixelSize: 12
                         wrapMode: Text.Wrap
@@ -362,8 +359,8 @@ Window {
         anchors.left: parent.left
         anchors.right: parent.right
         height: 28
-        color: "#0d0d0d"
-        border.color: "#00ff41"
+        color: "#1a0f2e"
+        border.color: "#7c3aed"
         border.width: 1
 
         Row {
@@ -372,32 +369,17 @@ Window {
             anchors.verticalCenter: parent.verticalCenter
             spacing: 24
 
-            Text {
-                text: "QNX SDP 8.0"
-                color: "#005c1a"
-                font.family: "monospace"
-                font.pixelSize: 11
-            }
-            Text {
-                text: "RPi4B aarch64le"
-                color: "#005c1a"
-                font.family: "monospace"
-                font.pixelSize: 11
-            }
-            Text {
-                text: "Qt 6.10 | Wayland"
-                color: "#005c1a"
-                font.family: "monospace"
-                font.pixelSize: 11
-            }
+            Text { text: "QNX SDP 8.0";      color: "#4c1d95"; font.family: "monospace"; font.pixelSize: 11 }
+            Text { text: "RPi4B aarch64le";   color: "#4c1d95"; font.family: "monospace"; font.pixelSize: 11 }
+            Text { text: "Qt 6.10 | Wayland"; color: "#4c1d95"; font.family: "monospace"; font.pixelSize: 11 }
         }
 
         Text {
             anchors.right: parent.right
             anchors.rightMargin: 16
             anchors.verticalCenter: parent.verticalCenter
-            text: "CUHacking 2025"
-            color: "#005c1a"
+            text: "CUHacking 2026"
+            color: "#4c1d95"
             font.family: "monospace"
             font.pixelSize: 11
         }
