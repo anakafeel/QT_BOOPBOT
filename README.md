@@ -1,7 +1,7 @@
 # BOOPBOT
 
 A Qt Quick application for QNX SDP 8.0, running on a Raspberry Pi 4B with a Pi Camera Module 3.
-Built for CUHacking. Black/green terminal-themed UI with a live camera feed panel and API control buttons.
+Built for CUHacking.terminal-themed UI with a live camera feed panel and API control buttons.
 
 <img width="975" height="743" alt="image" src="https://github.com/user-attachments/assets/187c491f-1129-43a5-87df-2d1e21a2b25c" />
 
