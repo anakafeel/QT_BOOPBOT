@@ -3,7 +3,7 @@
 set -e
 cd "$(dirname "$0")"
 
-SENSOR_CONF=/system/etc/config/sensor/camera_module3.conf
+SENSOR_CONF=/usr/etc/config/sensor/rpi4_camera_module3.conf
 
 echo "Restarting sensor service..."
 slay sensor 2>/dev/null || true

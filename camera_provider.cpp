@@ -8,18 +8,15 @@ static QImage nv12ToRgb(const uint8_t* data, int width, int height) {
     QImage img(width, height, QImage::Format_RGB888);
     const uint8_t* y_plane = data;
     const uint8_t* uv_plane = data + width * height;
-
     for (int row = 0; row < height; row++) {
         for (int col = 0; col < width; col++) {
             int y = y_plane[row * width + col];
             int uv_idx = (row / 2) * width + (col & ~1);
             int u = uv_plane[uv_idx] - 128;
             int v = uv_plane[uv_idx + 1] - 128;
-
             int r = qBound(0, y + (int)(1.370705f * v), 255);
             int g = qBound(0, y - (int)(0.337633f * u) - (int)(0.698001f * v), 255);
             int b = qBound(0, y + (int)(1.732446f * u), 255);
-
             img.setPixel(col, row, qRgb(r, g, b));
         }
     }
@@ -56,9 +53,7 @@ void CameraWorker::viewfinderCallback(camera_handle_t handle,
 
 void CameraWorker::processFrame(camera_buffer_t* buffer) {
     if (!buffer || !buffer->framebuf) return;
-
     QImage img;
-
     if (buffer->frametype == CAMERA_FRAMETYPE_NV12) {
         int w = buffer->framedesc.nv12.width;
         int h = buffer->framedesc.nv12.height;
@@ -69,11 +64,9 @@ void CameraWorker::processFrame(camera_buffer_t* buffer) {
         int stride = buffer->framedesc.rgb8888.stride;
         img = rgb8888ToRgb(buffer->framebuf, w, h, stride);
     } else {
-        // Unknown format — emit placeholder so we know callback fires
         img = QImage(640, 480, QImage::Format_RGB888);
         img.fill(Qt::darkGray);
     }
-
     if (!img.isNull()) {
         QMutexLocker lock(&m_mutex);
         m_frame = img;
@@ -83,7 +76,6 @@ void CameraWorker::processFrame(camera_buffer_t* buffer) {
 
 void CameraWorker::start() {
     emit statusChanged("Opening camera...");
-
     camera_error_t err = camera_open(CAMERA_UNIT_1,
                                      CAMERA_MODE_RW | CAMERA_MODE_ROLL,
                                      &m_handle);
@@ -91,28 +83,23 @@ void CameraWorker::start() {
         emit statusChanged(QString("camera_open failed: %1").arg(err));
         return;
     }
-    // Set viewfinder mode (2 = CAMERA_VFMODE_VIDEO per official camera_example tool)
     err = camera_set_vf_mode(m_handle, (camera_vfmode_t)5);
     if (err != CAMERA_EOK) {
         emit statusChanged(QString("camera_set_vf_mode failed: %1").arg(err));
         camera_close(m_handle);
         return;
     }
-
     m_running = true;
-
     err = camera_start_viewfinder(m_handle,
                                   viewfinderCallback,
                                   nullptr,
                                   this);
-
     if (err != CAMERA_EOK) {
         m_running = false;
         emit statusChanged(QString("camera_start_viewfinder failed: %1").arg(err));
         camera_close(m_handle);
         return;
     }
-
     emit statusChanged("Camera streaming");
 }
 
@@ -130,7 +117,6 @@ QImage CameraWorker::latestFrame() {
     return m_frame;
 }
 
-// Image provider
 CameraImageProvider::CameraImageProvider(CameraWorker* worker)
     : QQuickImageProvider(QQuickImageProvider::Image)
     , m_worker(worker) {}
@@ -141,10 +127,10 @@ QImage CameraImageProvider::requestImage(const QString&, QSize* size,
     if (img.isNull()) {
         img = QImage(640, 480, QImage::Format_RGB888);
         img.fill(QColor("#0a0a0a"));
-        // Draw "NO SIGNAL" text indicator via pixel pattern -- skip, just return dark frame
     }
     if (size) *size = img.size();
-    if (requestedSize.isValid())
+    if (requestedSize.isValid() && requestedSize != img.size()) {
         return img.scaled(requestedSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
     return img;
 }

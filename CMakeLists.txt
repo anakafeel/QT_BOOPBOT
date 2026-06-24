@@ -13,7 +13,6 @@ target_link_libraries(boopbot PRIVATE
     Qt6::Qml
     Qt6::Quick
     camapi
-    screen
 )
 
 # QML files need to be beside the binary at runtime
