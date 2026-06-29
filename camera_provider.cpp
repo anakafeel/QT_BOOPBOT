@@ -3,7 +3,7 @@
 #include <QDebug>
 #include <cstring>
 
-// NV12 to RGB888 conversion
+// NV12 to RGB888 conversion (Pi4 + Pi Camera Module 3)
 static QImage nv12ToRgb(const uint8_t* data, int width, int height) {
     QImage img(width, height, QImage::Format_RGB888);
     const uint8_t* y_plane = data;
@@ -36,6 +36,31 @@ static QImage rgb8888ToRgb(const uint8_t* data, int width, int height, int strid
     return img;
 }
 
+// YCBYCR (YUV 4:2:2 packed) to RGB888 conversion (Pi5 + Logitech C920)
+// Pixel order: Y0, Cb, Y1, Cr per macro-pixel (2 pixels)
+static QImage ycbycr422ToRgb(const uint8_t* data, int width, int height, int stride) {
+    QImage img(width, height, QImage::Format_RGB888);
+    for (int row = 0; row < height; row++) {
+        const uint8_t* src = data + row * stride;
+        uint8_t* dst = img.scanLine(row);
+        for (int col = 0; col < width; col += 2) {
+            int y0 = src[col * 2 + 0];
+            int cb = src[col * 2 + 1] - 128;
+            int y1 = src[col * 2 + 2];
+            int cr = src[col * 2 + 3] - 128;
+            // pixel 0
+            dst[col*3+0] = qBound(0, y0 + (int)(1.402f * cr), 255);
+            dst[col*3+1] = qBound(0, y0 - (int)(0.344f * cb) - (int)(0.714f * cr), 255);
+            dst[col*3+2] = qBound(0, y0 + (int)(1.772f * cb), 255);
+            // pixel 1
+            dst[col*3+3] = qBound(0, y1 + (int)(1.402f * cr), 255);
+            dst[col*3+4] = qBound(0, y1 - (int)(0.344f * cb) - (int)(0.714f * cr), 255);
+            dst[col*3+5] = qBound(0, y1 + (int)(1.772f * cb), 255);
+        }
+    }
+    return img;
+}
+
 CameraWorker::CameraWorker(QObject* parent) : QObject(parent) {}
 
 CameraWorker::~CameraWorker() {
@@ -63,6 +88,11 @@ void CameraWorker::processFrame(camera_buffer_t* buffer) {
         int h = buffer->framedesc.rgb8888.height;
         int stride = buffer->framedesc.rgb8888.stride;
         img = rgb8888ToRgb(buffer->framebuf, w, h, stride);
+    } else if (buffer->frametype == CAMERA_FRAMETYPE_YCBYCR) {
+        int w = buffer->framedesc.ycbycr.width;
+        int h = buffer->framedesc.ycbycr.height;
+        int stride = buffer->framedesc.ycbycr.stride;
+        img = ycbycr422ToRgb(buffer->framebuf, w, h, stride);
     } else {
         img = QImage(640, 480, QImage::Format_RGB888);
         img.fill(Qt::darkGray);
