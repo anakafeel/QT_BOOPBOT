@@ -143,7 +143,7 @@ QStringList CameraWorker::getPhotoList() {
     QStringList files = dir.entryList(filters, QDir::Files, QDir::Time);
     QStringList fullPaths;
     for (const QString& f : files) {
-        fullPaths << QString("file://%1/%2").arg(m_photoDir).arg(f);
+        fullPaths << QString("file:///%1/%2").arg(m_photoDir).arg(f);
     }
     return fullPaths;
 }

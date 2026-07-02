@@ -10,14 +10,13 @@ Window {
     title: "BOOPBOT"
     color: "#12091e"
 
-    // ── state ──────────────────────────────────────────────────────────────
-    property int  frameCounter:   0
-    property int  countdownValue: 3
+    property int frameCounter:   0
+    property int countdownValue: 3
     property string capturedPhoto: ""
-    property var  photoList:      []
-    property string appState:     "live"   // live | countdown | reveal | wall
+    property var photoList: []
+    property string appState: "live"
+    property string selectedWallPhoto: ""
 
-    // ── C++ signals ────────────────────────────────────────────────────────
     Connections {
         target: cameraRelay
         function onFrameReady() {
@@ -27,14 +26,16 @@ Window {
         }
         function onStatusChanged(status) { statusLabel.text = status }
         function onPhotoCaptured(path) {
-            root.capturedPhoto = path
+            root.capturedPhoto = "file://" + path
             root.appState = "reveal"
             revealTimer.restart()
         }
-        function onPhotoListChanged(photos) { root.photoList = photos }
+        function onPhotoListChanged(photos) {
+            root.photoList = photos
+            if (photos.length > 0) root.selectedWallPhoto = photos[0]
+        }
     }
 
-    // ── countdown timer ────────────────────────────────────────────────────
     Timer {
         id: countdownTimer
         interval: 1000
@@ -50,7 +51,6 @@ Window {
         }
     }
 
-    // ── reveal auto-dismiss ────────────────────────────────────────────────
     Timer {
         id: revealTimer
         interval: 10000
@@ -58,9 +58,7 @@ Window {
         onTriggered: root.appState = "live"
     }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // HEADER
-    // ══════════════════════════════════════════════════════════════════════
+    // ── HEADER ────────────────────────────────────────────────────────────
     Rectangle {
         id: header
         anchors.top: parent.top
@@ -84,7 +82,6 @@ Window {
                 fillMode: Image.PreserveAspectFit
                 anchors.verticalCenter: parent.verticalCenter
             }
-
             Text {
                 text: "BOOPBOT v1.0"
                 color: "#a78bfa"
@@ -93,7 +90,6 @@ Window {
                 font.bold: true
                 font.letterSpacing: 3
             }
-
             Rectangle {
                 width: 8; height: 8; radius: 4
                 color: "#8b5cf6"
@@ -121,9 +117,7 @@ Window {
         }
     }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // MAIN CONTENT
-    // ══════════════════════════════════════════════════════════════════════
+    // ── MAIN ROW ──────────────────────────────────────────────────────────
     Row {
         anchors.top: header.bottom
         anchors.topMargin: 1
@@ -132,7 +126,7 @@ Window {
         anchors.bottom: statusBar.top
         spacing: 1
 
-        // ── CAMERA FEED PANEL ─────────────────────────────────────────────
+        // ── LEFT: CAMERA FEED ─────────────────────────────────────────────
         Rectangle {
             width: parent.width * 0.65
             height: parent.height
@@ -150,10 +144,10 @@ Window {
                 font.pixelSize: 11
                 font.letterSpacing: 4
                 opacity: 0.7
+                visible: root.appState === "live" || root.appState === "countdown"
             }
 
             Rectangle {
-                id: feedRect
                 anchors.centerIn: parent
                 width: parent.width - 32
                 height: parent.height - 48
@@ -162,7 +156,7 @@ Window {
                 border.width: 1
                 clip: true
 
-                // Live camera feed
+                // ── LIVE FEED ──────────────────────────────────────────────
                 Image {
                     id: cameraImage
                     anchors.fill: parent
@@ -180,7 +174,6 @@ Window {
                         Column {
                             anchors.centerIn: parent
                             spacing: 8
-
                             Image {
                                 width: 64; height: 64
                                 source: "file:///data/home/qnxuser/boopbot/icon_purple.png"
@@ -192,7 +185,6 @@ Window {
                                     NumberAnimation { to: 1.0; duration: 600 }
                                 }
                             }
-
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 text: "[ NO SIGNAL ]"
@@ -201,7 +193,6 @@ Window {
                                 font.pixelSize: 20
                                 font.bold: true
                             }
-
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 text: "Initializing camera..."
@@ -213,7 +204,7 @@ Window {
                     }
                 }
 
-                // Corner brackets
+                // Corner brackets (live/countdown only)
                 Canvas {
                     anchors.fill: parent
                     visible: root.appState === "live" || root.appState === "countdown"
@@ -248,16 +239,13 @@ Window {
                             font.bold: true
                             style: Text.Outline
                             styleColor: "#7c3aed"
-
                             SequentialAnimation on scale {
-                                id: countdownScaleAnim
                                 running: root.appState === "countdown"
                                 loops: Animation.Infinite
                                 NumberAnimation { to: 1.2; duration: 200; easing.type: Easing.OutQuad }
                                 NumberAnimation { to: 1.0; duration: 700; easing.type: Easing.InQuad }
                             }
                         }
-
                         Text {
                             anchors.horizontalCenter: parent.horizontalCenter
                             text: "GET READY!"
@@ -274,22 +262,18 @@ Window {
                     anchors.fill: parent
                     visible: root.appState === "reveal"
 
-                    // Captured photo
                     Image {
-                        id: revealImage
                         anchors.fill: parent
                         fillMode: Image.PreserveAspectFit
                         source: root.capturedPhoto
                         cache: false
                     }
 
-                    // Placeholder border overlay (replace image source
-                    // with file:///data/.../border.png when design arrives)
-                    Rectangle {
+                    // Border overlay — replace Rectangle with Image when real PNG arrives:
+                    // Image { anchors.fill: parent; source: "file:///data/border.png" }
+                    Item {
                         anchors.fill: parent
-                        color: "transparent"
 
-                        // Top bar
                         Rectangle {
                             anchors.top: parent.top
                             anchors.left: parent.left
@@ -318,7 +302,6 @@ Window {
                             }
                         }
 
-                        // Bottom bar
                         Rectangle {
                             anchors.bottom: parent.bottom
                             anchors.left: parent.left
@@ -326,28 +309,21 @@ Window {
                             height: 36
                             color: "#e612091e"
 
-                            Row {
+                            Text {
                                 anchors.centerIn: parent
-                                spacing: 16
-
-                                Text {
-                                    text: "July 10–12, 2026  •  Carleton University"
-                                    color: "#8b5cf6"
-                                    font.family: "monospace"
-                                    font.pixelSize: 11
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
+                                text: "July 10–12, 2026  •  Carleton University"
+                                color: "#8b5cf6"
+                                font.family: "monospace"
+                                font.pixelSize: 11
                             }
                         }
 
-                        // Purple corner accents
                         Rectangle { width: 4; height: 40; color: "#7c3aed"; anchors.top: parent.top; anchors.left: parent.left }
                         Rectangle { width: 4; height: 40; color: "#7c3aed"; anchors.top: parent.top; anchors.right: parent.right }
                         Rectangle { width: 4; height: 40; color: "#7c3aed"; anchors.bottom: parent.bottom; anchors.left: parent.left }
                         Rectangle { width: 4; height: 40; color: "#7c3aed"; anchors.bottom: parent.bottom; anchors.right: parent.right }
                     }
 
-                    // Dismiss hint + countdown ring
                     Column {
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.bottom: parent.bottom
@@ -364,20 +340,89 @@ Window {
                         }
                         Text {
                             anchors.horizontalCenter: parent.horizontalCenter
-                            text: "Returning to live feed in 10s"
+                            text: "Tap anywhere to dismiss"
                             color: "#8b5cf6"
                             font.family: "monospace"
                             font.pixelSize: 11
                         }
                     }
 
-                    // Tap anywhere to dismiss early
                     MouseArea {
                         anchors.fill: parent
                         onClicked: {
                             revealTimer.stop()
                             root.appState = "live"
                         }
+                    }
+                }
+
+                // ── WALL FEATURED PHOTO (left panel) ─────────────────────
+                Item {
+                    anchors.fill: parent
+                    visible: root.appState === "wall"
+
+                    Image {
+                        anchors.fill: parent
+                        anchors.margins: 2
+                        fillMode: Image.PreserveAspectFit
+                        source: root.selectedWallPhoto
+                        cache: false
+                    }
+
+                    // Mini border overlay
+                    Rectangle {
+                        anchors.top: parent.top
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        height: 32
+                        color: "#dd12091e"
+                        Row {
+                            anchors.centerIn: parent
+                            spacing: 6
+                            Image {
+                                width: 18; height: 18
+                                source: "file:///data/home/qnxuser/boopbot/icon_purple.png"
+                                fillMode: Image.PreserveAspectFit
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            Text {
+                                text: "CUHacking 2026"
+                                color: "#a78bfa"
+                                font.family: "monospace"
+                                font.pixelSize: 12
+                                font.bold: true
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        anchors.bottom: parent.bottom
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        height: 28
+                        color: "#dd12091e"
+                        Text {
+                            anchors.centerIn: parent
+                            text: "July 10–12, 2026  •  Carleton University"
+                            color: "#8b5cf6"
+                            font.family: "monospace"
+                            font.pixelSize: 10
+                        }
+                    }
+
+                    Rectangle { width: 3; height: 32; color: "#7c3aed"; anchors.top: parent.top; anchors.left: parent.left }
+                    Rectangle { width: 3; height: 32; color: "#7c3aed"; anchors.top: parent.top; anchors.right: parent.right }
+                    Rectangle { width: 3; height: 28; color: "#7c3aed"; anchors.bottom: parent.bottom; anchors.left: parent.left }
+                    Rectangle { width: 3; height: 28; color: "#7c3aed"; anchors.bottom: parent.bottom; anchors.right: parent.right }
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "Select a photo →"
+                        color: "#4c1d95"
+                        font.family: "monospace"
+                        font.pixelSize: 13
+                        visible: root.selectedWallPhoto === ""
                     }
                 }
             }
@@ -403,7 +448,7 @@ Window {
             border.color: "#3b1f6e"
             border.width: 1
 
-            // ── LIVE VIEW: controls ───────────────────────────────────────
+            // ── LIVE/COUNTDOWN CONTROLS ───────────────────────────────────
             Column {
                 anchors.fill: parent
                 anchors.margins: 10
@@ -440,8 +485,7 @@ Window {
                             anchors.verticalCenter: parent.verticalCenter
                         }
                         Text {
-                            text: root.appState === "countdown" ?
-                                  "GET READY..." : "CAPTURE FRAME"
+                            text: root.appState === "countdown" ? "GET READY..." : "CAPTURE FRAME"
                             color: "#ffffff"
                             font.family: "monospace"
                             font.pixelSize: 13
@@ -533,6 +577,7 @@ Window {
                     opacity: 0.7
                 }
 
+                // Last photo with border overlay
                 Rectangle {
                     width: parent.width
                     height: width * 0.6
@@ -545,10 +590,56 @@ Window {
                     Image {
                         anchors.fill: parent
                         anchors.margins: 2
-                        fillMode: Image.PreserveAspectFit
+                        fillMode: Image.PreserveAspectCrop
                         source: root.photoList.length > 0 ? root.photoList[0] : ""
                         cache: false
                         visible: root.photoList.length > 0
+                    }
+
+                    // Mini border overlay on thumbnail
+                    Item {
+                        anchors.fill: parent
+                        visible: root.photoList.length > 0
+
+                        Rectangle {
+                            anchors.top: parent.top
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            height: 16
+                            color: "#cc12091e"
+                            Row {
+                                anchors.centerIn: parent
+                                spacing: 4
+                                Image {
+                                    width: 10; height: 10
+                                    source: "file:///data/home/qnxuser/boopbot/icon_purple.png"
+                                    fillMode: Image.PreserveAspectFit
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                Text {
+                                    text: "CUHacking 2026"
+                                    color: "#a78bfa"
+                                    font.family: "monospace"
+                                    font.pixelSize: 8
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            anchors.bottom: parent.bottom
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            height: 12
+                            color: "#cc12091e"
+                            Text {
+                                anchors.centerIn: parent
+                                text: "July 10–12 • Carleton"
+                                color: "#8b5cf6"
+                                font.family: "monospace"
+                                font.pixelSize: 7
+                            }
+                        }
                     }
 
                     Text {
@@ -559,6 +650,16 @@ Window {
                         font.pixelSize: 11
                         visible: root.photoList.length === 0
                     }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        enabled: root.photoList.length > 0
+                        onClicked: {
+                            root.capturedPhoto = root.photoList[0]
+                            root.appState = "reveal"
+                            revealTimer.stop()
+                        }
+                    }
                 }
             }
 
@@ -567,10 +668,12 @@ Window {
                 anchors.fill: parent
                 anchors.margins: 10
                 spacing: 6
-                visible: root.appState === "wall" || root.appState === "reveal"
+                visible: root.appState === "wall"
 
                 Row {
                     width: parent.width
+                    spacing: 4
+
                     Text {
                         text: "PHOTO WALL"
                         color: "#a78bfa"
@@ -578,13 +681,17 @@ Window {
                         font.pixelSize: 11
                         font.letterSpacing: 3
                         opacity: 0.7
+                        anchors.verticalCenter: parent.verticalCenter
                     }
-                    Item { width: parent.width - backBtn.width - 120; height: 1 }
+
+                    Item { width: parent.width - backBtn.width - 100; height: 1 }
+
                     Rectangle {
                         id: backBtn
                         width: 60; height: 22
                         color: backArea.containsMouse ? "#3b1f6e" : "#1a0f2e"
                         border.color: "#7c3aed"; border.width: 1; radius: 2
+                        anchors.verticalCenter: parent.verticalCenter
                         Text {
                             anchors.centerIn: parent
                             text: "< BACK"
@@ -601,26 +708,28 @@ Window {
 
                 Rectangle { width: parent.width; height: 1; color: "#3b1f6e" }
 
+                // Grid of thumbnails
                 GridView {
                     id: photoGrid
                     width: parent.width
-                    height: parent.height - 40
-                    cellWidth: width / 2
+                    height: parent.height - 60
+                    cellWidth: width / 3
                     cellHeight: cellWidth * 0.75
                     clip: true
                     model: root.photoList
 
                     delegate: Rectangle {
-                        width: photoGrid.cellWidth - 4
-                        height: photoGrid.cellHeight - 4
-                        color: "#0a0618"
-                        border.color: "#3b1f6e"
+                        width: photoGrid.cellWidth - 3
+                        height: photoGrid.cellHeight - 3
+                        color: root.selectedWallPhoto === modelData ? "#3b1f6e" : "#0a0618"
+                        border.color: root.selectedWallPhoto === modelData ? "#a78bfa" : "#3b1f6e"
                         border.width: 1
                         radius: 2
+                        clip: true
 
                         Image {
                             anchors.fill: parent
-                            anchors.margins: 2
+                            anchors.margins: 1
                             fillMode: Image.PreserveAspectCrop
                             source: modelData
                             cache: false
@@ -628,7 +737,8 @@ Window {
 
                         MouseArea {
                             anchors.fill: parent
-                            onClicked: {
+                            onClicked: root.selectedWallPhoto = modelData
+                            onDoubleClicked: {
                                 root.capturedPhoto = modelData
                                 root.appState = "reveal"
                                 revealTimer.stop()
@@ -636,13 +746,100 @@ Window {
                         }
                     }
                 }
+
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: root.photoList.length === 0 ? "No photos yet — hit CAPTURE!" : "Tap photo to preview • Double-tap to fullscreen"
+                    color: "#4c1d95"
+                    font.family: "monospace"
+                    font.pixelSize: 9
+                }
+            }
+
+            // ── REVEAL SIDEBAR ────────────────────────────────────────────
+            Column {
+                anchors.fill: parent
+                anchors.margins: 10
+                spacing: 8
+                visible: root.appState === "reveal"
+
+                Text {
+                    text: "PHOTO CAPTURED"
+                    color: "#a78bfa"
+                    font.family: "monospace"
+                    font.pixelSize: 11
+                    font.letterSpacing: 3
+                    opacity: 0.7
+                }
+
+                Rectangle { width: parent.width; height: 1; color: "#3b1f6e" }
+
+                Text {
+                    width: parent.width
+                    text: "📸 Saved to /data/photos/"
+                    color: "#8b5cf6"
+                    font.family: "monospace"
+                    font.pixelSize: 11
+                    wrapMode: Text.Wrap
+                }
+
+                Text {
+                    width: parent.width
+                    text: "Tap photo to dismiss\nor wait 10s"
+                    color: "#4c1d95"
+                    font.family: "monospace"
+                    font.pixelSize: 10
+                    wrapMode: Text.Wrap
+                }
+
+                Rectangle { width: parent.width; height: 1; color: "#3b1f6e" }
+
+                Text {
+                    text: "TOTAL PHOTOS"
+                    color: "#a78bfa"
+                    font.family: "monospace"
+                    font.pixelSize: 11
+                    opacity: 0.7
+                }
+
+                Text {
+                    text: root.photoList.length
+                    color: "#ffffff"
+                    font.family: "monospace"
+                    font.pixelSize: 40
+                    font.bold: true
+                    anchors.horizontalCenter: parent.horizontalCenter
+                }
+
+                Rectangle {
+                    width: parent.width
+                    height: 36
+                    color: viewWallArea.containsMouse ? "#3b1f6e" : "#1a0f2e"
+                    border.color: "#7c3aed"; border.width: 1; radius: 2
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "> VIEW PHOTO WALL"
+                        color: "#a78bfa"
+                        font.family: "monospace"
+                        font.pixelSize: 11
+                        font.bold: true
+                    }
+                    MouseArea {
+                        id: viewWallArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: {
+                            revealTimer.stop()
+                            root.appState = "wall"
+                        }
+                    }
+                }
             }
         }
     }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // STATUS BAR
-    // ══════════════════════════════════════════════════════════════════════
+    // ── STATUS BAR ────────────────────────────────────────────────────────
     Rectangle {
         id: statusBar
         anchors.bottom: parent.bottom
@@ -659,7 +856,7 @@ Window {
             anchors.verticalCenter: parent.verticalCenter
             spacing: 24
             Text { text: "QNX SDP 8.0";      color: "#4c1d95"; font.family: "monospace"; font.pixelSize: 11 }
-            Text { text: "RPi4B aarch64le";   color: "#4c1d95"; font.family: "monospace"; font.pixelSize: 11 }
+            Text { text: "RPi5 aarch64le";    color: "#4c1d95"; font.family: "monospace"; font.pixelSize: 11 }
             Text { text: "Qt 6.10 | Wayland"; color: "#4c1d95"; font.family: "monospace"; font.pixelSize: 11 }
         }
 
