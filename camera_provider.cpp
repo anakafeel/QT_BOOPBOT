@@ -101,7 +101,8 @@ void CameraWorker::processFrame(camera_buffer_t* buffer) {
         QMutexLocker lock(&m_mutex);
         m_frame = img;
     }
-    emit frameReady();
+    m_frameSkip++;
+    if (m_frameSkip % 3 == 0) emit frameReady();
 }
 
 void CameraWorker::start() {

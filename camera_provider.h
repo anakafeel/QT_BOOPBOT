@@ -29,6 +29,7 @@ private:
     QMutex m_mutex;
     QImage m_frame;
     std::atomic<bool> m_running{false};
+    int m_frameSkip{0};
 };
 
 class CameraImageProvider : public QQuickImageProvider {
