@@ -1,6 +1,9 @@
 #include "camera_provider.h"
 #include "camera_api.h"
 #include <QDebug>
+#include <QDateTime>
+#include <QDir>
+#include <QImageWriter>
 #include <cstring>
 
 // NV12 to RGB888 conversion (Pi4 + Pi Camera Module 3)
@@ -36,8 +39,7 @@ static QImage rgb8888ToRgb(const uint8_t* data, int width, int height, int strid
     return img;
 }
 
-// YCBYCR (YUV 4:2:2 packed) to RGB888 conversion (Pi5 + Logitech C920)
-// Pixel order: Y0, Cb, Y1, Cr per macro-pixel (2 pixels)
+// YCBYCR (YUV 4:2:2 packed) to RGB888 (Pi5 + Logitech C920)
 static QImage ycbycr422ToRgb(const uint8_t* data, int width, int height, int stride) {
     QImage img(width, height, QImage::Format_RGB888);
     for (int row = 0; row < height; row++) {
@@ -48,11 +50,9 @@ static QImage ycbycr422ToRgb(const uint8_t* data, int width, int height, int str
             int cb = src[col * 2 + 1] - 128;
             int y1 = src[col * 2 + 2];
             int cr = src[col * 2 + 3] - 128;
-            // pixel 0
             dst[col*3+0] = qBound(0, y0 + (int)(1.402f * cr), 255);
             dst[col*3+1] = qBound(0, y0 - (int)(0.344f * cb) - (int)(0.714f * cr), 255);
             dst[col*3+2] = qBound(0, y0 + (int)(1.772f * cb), 255);
-            // pixel 1
             dst[col*3+3] = qBound(0, y1 + (int)(1.402f * cr), 255);
             dst[col*3+4] = qBound(0, y1 - (int)(0.344f * cb) - (int)(0.714f * cr), 255);
             dst[col*3+5] = qBound(0, y1 + (int)(1.772f * cb), 255);
@@ -61,10 +61,19 @@ static QImage ycbycr422ToRgb(const uint8_t* data, int width, int height, int str
     return img;
 }
 
-CameraWorker::CameraWorker(QObject* parent) : QObject(parent) {}
+CameraWorker::CameraWorker(QObject* parent) : QObject(parent) {
+    ensurePhotoDirExists();
+}
 
 CameraWorker::~CameraWorker() {
     stop();
+}
+
+void CameraWorker::ensurePhotoDirExists() {
+    QDir dir(m_photoDir);
+    if (!dir.exists()) {
+        dir.mkpath(".");
+    }
 }
 
 void CameraWorker::viewfinderCallback(camera_handle_t handle,
@@ -102,7 +111,41 @@ void CameraWorker::processFrame(camera_buffer_t* buffer) {
         m_frame = img;
     }
     m_frameSkip++;
-    if (m_frameSkip % 3 == 0) emit frameReady();
+    if (m_frameSkip % 6 == 0) emit frameReady();
+}
+
+void CameraWorker::capturePhoto() {
+    QMutexLocker lock(&m_mutex);
+    if (m_frame.isNull()) {
+        emit statusChanged("No frame to capture");
+        return;
+    }
+    QImage snapshot = m_frame;
+    lock.unlock();
+
+    QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+    QString filename = QString("%1/boopbot_%2.jpg").arg(m_photoDir).arg(timestamp);
+
+    QImageWriter writer(filename, "jpg");
+    writer.setQuality(90);
+    if (writer.write(snapshot)) {
+        emit photoCaptured(filename);
+        emit photoListChanged(getPhotoList());
+    } else {
+        emit statusChanged(QString("Save failed: %1").arg(writer.errorString()));
+    }
+}
+
+QStringList CameraWorker::getPhotoList() {
+    QDir dir(m_photoDir);
+    QStringList filters;
+    filters << "*.jpg" << "*.jpeg";
+    QStringList files = dir.entryList(filters, QDir::Files, QDir::Time);
+    QStringList fullPaths;
+    for (const QString& f : files) {
+        fullPaths << QString("file://%1/%2").arg(m_photoDir).arg(f);
+    }
+    return fullPaths;
 }
 
 void CameraWorker::start() {
@@ -132,6 +175,7 @@ void CameraWorker::start() {
         return;
     }
     emit statusChanged("Camera streaming");
+    emit photoListChanged(getPhotoList());
 }
 
 void CameraWorker::stop() {
