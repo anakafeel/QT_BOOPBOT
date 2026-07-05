@@ -1902,3 +1902,720 @@ Only touch this if working on frame processing or camera behaviour. The key func
 | MESA GPU memory errors / black screen | GPU memory leaked from crashed runs | Reboot the Pi |
 | `ssh: Could not resolve hostname` | Running Pi command locally instead of in SSH session | SSH into Pi first, then run commands |
 
+
+---
+
+# PART 11 — Pi5 + USB Webcam (Logitech C920) — Full Debug Trail (June 29, 2026)
+
+## Overview
+
+After getting the Pi Camera Module 3 working on Pi4 (Part 9), the goal shifted to:
+1. Moving from Pi4 to Raspberry Pi 5 (BCM2712)
+2. Switching from the CSI Pi Camera Module 3 to a Logitech C920 USB webcam
+
+This part documents every issue hit, every fix tried, and exactly what finally worked.
+
+---
+
+## 11.1 — Starting point: Pi5 with u3v_camera.conf
+
+The first attempt was using the same approach that worked on Pi4 for USB cameras:
+
+```sh
+sensor -U 521:521 -b external -r /data/share/sensor -c /system/etc/config/sensor/u3v_camera.conf
+```
+
+**Error:**
+```
+PlatformExternal::openInterface: Error Library cannot be found trying to dlopen library
+Failed to open external library interface: err = 5
+Failed to parse: name type value  usb_camera (err = 5)
+Unable to initialize Platform
+```
+
+**Root cause:** The `u3v_camera.conf` and `usb_camera.conf` system files have no `SENSOR_GLOBAL` section — they don't specify which platform library to load. On Pi4, the sensor service auto-detected `libsensor_platform_broadcom.so` (BCM2711) which happened to support USB cameras. On Pi5, no USB platform library exists in the default path so it fails immediately.
+
+---
+
+## 11.2 — Installing sensor framework packages
+
+```sh
+apk add qnx-sensor-framework \
+        qnx-sensor-framework-dev \
+        qnx-sensor-framework-rpi5 \
+        qnx-sensor-framework-utils
+```
+
+After install, only one platform library exists on Pi5:
+```
+/usr/lib/libsensor_platform_broadcom_rpi5.so
+```
+
+No USB/U3V platform library — the `qnx-sensor-framework-rpi5` package only contains the CSI camera platform library, just like Pi4's equivalent only had `libsensor_platform_broadcom.so`.
+
+**Key finding from strings/nm search:** `libsensor_platform_broadcom_rpi5.so` has zero USB/U3V support strings — it's purely for CSI cameras (Pi Camera Module).
+
+---
+
+## 11.3 — Adding SENSOR_GLOBAL to the config
+
+Created a custom config pointing to the BCM2712 platform library:
+
+```
+/data/share/sensor/rpi5_usb_camera.conf:
+
+begin SENSOR_GLOBAL
+    external_platform_library_path = libsensor_platform_broadcom_rpi5.so
+    external_platform_library_variant = PLATFORM_VARIANT_BCM2712
+end SENSOR_GLOBAL
+begin SENSOR_UNIT_1
+    type = usb_camera
+    name = front-camera
+    position = 0, 0, 0
+    direction = 0, 0, 0
+    default_video_framerate = 30
+    address = /dev/usb/io-usb-otg, -1, -1, -1, -1
+end SENSOR_UNIT_1
+```
+
+**Result:** Sensor service started, `/dev/sensor/camera1` appeared, camera detected (`Adding device(0x046d:0x08e5)`). But viewfinder failed:
+
+```
+startStreaming: isochronous = 1
+selectAlternateInterface: Selecting interface 1 and alternate 10
+selectAlternateInterface: Failed to select our desired interface - alternate=10
+startPreview: Failed to start preview 260
+```
+
+`libsensor_platform_broadcom_rpi5.so` DOES support USB cameras — the BCM2712 library handles UVC enumeration correctly. The failure was at the USB streaming level, not the sensor framework level.
+
+---
+
+## 11.4 — The isochronous alternate=10 problem
+
+The sensor framework was hardcoding `isochronous=1` and selecting `alternate=10` (highest bandwidth tier for 640x480 YUYV). The Pi5's xHCI USB controller (DWC3) was rejecting this.
+
+**Fixes attempted (all failed):**
+
+| Fix tried | Result |
+|-----------|--------|
+| USB 2.0 port (black) | Same `alternate=10` failure |
+| USB 3.0 port (blue) | Same `alternate=10` failure |
+| `default_video_framerate = 15` | No effect, sensor ignores it |
+| `default_video_format = mjpeg` | Crashed sensor service (`Invalid video viewfinder frame type`) |
+| `default_video_width = 320` / `height = 240` | Crashed sensor service (invalid config keys) |
+| `num_user_buffers = 12` + `user_queue_depth = 4` | Sensor stayed alive but same streaming failure |
+| `libsfc_libyuv.so` symlink to `libyuv.so` | Fixed secondary format warning but not streaming |
+| Unplug all other USB devices (QNXE-1119 workaround) | No effect on `alternate=10` |
+| `-U 521:521,1001` UID format | No effect on streaming |
+| Add `INTERIM_DATA_UNIT_1` and `ISP_TUNING_1` sections | Sensor service stayed alive + `data1` appeared, but same streaming failure |
+
+**Invalid config values for Pi5 sensor framework (do NOT use):**
+- `default_video_format = mjpeg` → crashes sensor service
+- `default_video_width = 320` → crashes sensor service
+- `default_video_height = 240` → crashes sensor service
+
+**Valid `SENSOR_UNIT_1` keys for usb_camera type:**
+- `type`, `name`, `position`, `direction`, `default_video_framerate`
+- `address`, `num_user_buffers`, `user_queue_depth`
+
+---
+
+## 11.5 — Comparing Pi4 vs Pi5 slog2 — smoking gun
+
+Running the same C920 camera on Pi4 with `u3v_camera.conf` revealed:
+
+**Pi4 (BCM2711, DWC2 USB controller):**
+```
+selectAlternateInterface: Selecting interface 1 and alternate 10
+received first preview frame from start of preview   ← SUCCEEDS
+measured incoming frame rate of 15.0 fps
+```
+
+**Pi5 (BCM2712, DWC3/xHCI USB controller):**
+```
+selectAlternateInterface: Selecting interface 1 and alternate 10
+Failed to select our desired interface - alternate=10   ← FAILS
+```
+
+**Both boards select `alternate=10`.** The difference is the USB host controller:
+- Pi4 uses **DWC2** — accepts the isochronous SET_INTERFACE request for alternate=10
+- Pi5 uses **DWC3/xHCI** (`devu-hcd-dwc3-xhci.so`) — rejects it
+
+This is a driver-level bug in the Pi5's xHCI driver, not a config issue.
+
+---
+
+## 11.6 — Finding the fix: updated DWC3 xHCI driver
+
+From QNX SDP 8.0.3 USB release notes:
+> BCM2712 USB driver (for Raspberry Pi5 BSP) — classified as **Experimental Software SQML 1** (no formal testing, no formal support)
+
+Package available via apk but NOT installed by default:
+```
+qnx-devu-hcd-dwc3-xhci-8.0.4-r0
+```
+
+**The fix:**
+```sh
+apk add qnx-devu-hcd-dwc3-xhci
+reboot
+```
+
+After reboot, the new driver loads from `/usr/lib/dll/devu-hcd-dwc3-xhci.so` instead of the old system one. The updated driver correctly handles isochronous alternate interface selection.
+
+**After reboot + retry:**
+```
+selectAlternateInterface: Selecting interface 1 and alternate 10
+received first preview frame   ← SUCCEEDS
+measured incoming frame rate of 15.0 fps
+```
+
+Camera streaming on Pi5 works.
+
+---
+
+## 11.7 — Getting BOOPBOT running on Pi5
+
+### Prerequisites
+
+```sh
+# Qt
+apk add qt6-base qt6-base-dev qt6-declarative qt6-declarative-dev qt6-wayland
+
+# Sensor framework
+apk add qnx-sensor-framework qnx-sensor-framework-dev \
+        qnx-sensor-framework-rpi5 qnx-sensor-framework-utils
+
+# CRITICAL: updated xHCI driver (fixes isochronous streaming on BCM2712)
+apk add qnx-devu-hcd-dwc3-xhci
+
+# Reboot after installing the xHCI driver
+reboot
+```
+
+### Sensor config for Pi5 + C920
+
+Save as `/data/share/sensor/rpi5_usb_camera.conf`:
+
+```
+begin SENSOR_GLOBAL
+    external_platform_library_path = libsensor_platform_broadcom_rpi5.so
+    external_platform_library_variant = PLATFORM_VARIANT_BCM2712
+end SENSOR_GLOBAL
+begin SENSOR_UNIT_1
+    type = usb_camera
+    name = front-camera
+    position = 0, 0, 0
+    direction = 0, 0, 0
+    default_video_framerate = 30
+    address = /dev/usb/io-usb-otg, -1, -1, -1, -1
+    num_user_buffers = 12
+    user_queue_depth = 4
+end SENSOR_UNIT_1
+begin INTERIM_DATA_UNIT_1
+    num_buffers = 5
+    buffer_size = 8096
+    queue_depth = 1
+    data_format = SENSOR_FORMAT_ISP_TUNING_REQUEST
+    name = tuning_requests
+end INTERIM_DATA_UNIT_1
+begin ISP_TUNING_1
+    request_interim_data_unit = INTERIM_DATA_UNIT_1
+    sensor_units = SENSOR_UNIT_1
+end ISP_TUNING_1
+```
+
+### Sensor service launch command for Pi5 + USB
+
+```sh
+sensor -U 521:521,1001 -b external -r /data/share/sensor -c /data/share/sensor/rpi5_usb_camera.conf &
+```
+
+Note: `-U 521:521,1001` (not just `521:521`) — documented in official QNX QSTI guide for USB cameras.
+Note: Camera must be in a **blue USB 3.0 port**.
+
+### YCBYCR frame format
+
+The C920 outputs `CAMERA_FRAMETYPE_YCBYCR` (frametype 14) — YUV 4:2:2 packed format, pixel order Y0, Cb, Y1, Cr per macro-pixel. This is different from the Pi Camera Module 3 which outputs NV12 (frametype 1).
+
+Added `ycbycr422ToRgb()` converter to `camera_provider.cpp`:
+
+```cpp
+} else if (buffer->frametype == CAMERA_FRAMETYPE_YCBYCR) {
+    int w = buffer->framedesc.ycbycr.width;
+    int h = buffer->framedesc.ycbycr.height;
+    int stride = buffer->framedesc.ycbycr.stride;
+    img = ycbycr422ToRgb(buffer->framebuf, w, h, stride);
+}
+```
+
+---
+
+## 11.8 — Run script reference
+
+The repo now has three run scripts:
+
+| Script | Platform | Camera |
+|--------|----------|--------|
+| `run_pi4_picam.sh` | Raspberry Pi 4 | Pi Camera Module 3 (CSI, NV12) |
+| `run_pi4_c920.sh` | Raspberry Pi 4 | Logitech C920 USB webcam (YCBYCR) |
+| `run_pi5_c920.sh` | Raspberry Pi 5 | Logitech C920 USB webcam (YCBYCR) |
+
+`run.sh` is a symlink — currently points to `run_pi5_c920.sh`.
+
+To switch: `ln -sf run_pi4_picam.sh run.sh`
+
+---
+
+## 11.9 — libsfc_libyuv.so fix (non-fatal but cleans up warnings)
+
+The sensor service warns `Cannot find sfc_func_support` because it expects a QNX-specific wrapper around libyuv. The raw `libyuv.so` is installed but doesn't export the right function name. This is a non-fatal warning — camera streams fine without it. To suppress the warning:
+
+```sh
+ln -s /usr/lib/libyuv.so /usr/lib/libsfc_libyuv.so
+```
+
+Note: This finds the library but still shows `Cannot find sfc_func_support` because the function name doesn't match. Truly suppressing it requires the actual QNX libyuv wrapper, which isn't in any available apk package.
+
+---
+
+## 11.10 — Root cause summary
+
+| Issue | Root cause | Fix |
+|-------|-----------|-----|
+| `Error Library cannot be found` on Pi5 | No `SENSOR_GLOBAL` section in system u3v conf | Add `SENSOR_GLOBAL` with `libsensor_platform_broadcom_rpi5.so` + `PLATFORM_VARIANT_BCM2712` |
+| Sensor service exits immediately | `Did not find supported data units` | Add `INTERIM_DATA_UNIT_1` + `ISP_TUNING_1` sections |
+| `alternate=10` isochronous failure | Pi5 DWC3/xHCI driver (old version) rejects SET_INTERFACE for isochronous endpoints | `apk add qnx-devu-hcd-dwc3-xhci` + reboot |
+| Camera feed shows grey/black in boopbot | C920 outputs YCBYCR (YUV422), not NV12 | Add `ycbycr422ToRgb()` converter + YCBYCR case in `processFrame()` |
+| `default_video_format = mjpeg` crashes sensor | Invalid format value for this sensor framework version | Do not use — let sensor auto-negotiate format |
+
+
+---
+
+# PART 12 — Photo Booth Feature + App Cleanup (July 1-2, 2026)
+
+## Overview
+
+Session goals:
+1. Replace dead placeholder buttons with a real photo booth feature
+2. Fix persistent VNC ZRLE decode errors
+3. Clean up multiple run scripts into a single interactive launcher
+4. Fix threading issue when adding new C++ slots callable from QML
+
+---
+
+## 12.1 — VNC ZRLE decode errors (TigerVNC 1.16.2)
+
+**Symptom:** TigerVNC crashes repeatedly with `ZRLE decode error` and `ZlibInStream: inflate failed` when BOOPBOT is streaming live camera feed.
+
+**Root cause:** Known bug in TigerVNC 1.14.0+ with ZRLE compression. Camera feed updating at ~5fps generates too much compressed data for the ZRLE decoder to handle reliably.
+
+**Fix:** Connect with raw encoding (bypasses ZRLE compression entirely):
+```sh
+vncviewer -PreferredEncoding raw anakafeelqnxpi5.local:5900
+```
+
+Make permanent:
+```sh
+echo "PreferredEncoding=raw" >> ~/.config/tigervnc/vncviewer.conf
+```
+
+**Note:** VNC will look choppy at raw encoding over WiFi — this is expected and not representative of how the app looks on a directly connected monitor at the hackathon.
+
+**Frame skip:** Added `m_frameSkip % 3` in `processFrame()` to emit `frameReady()` only every 3rd frame, reducing VNC update rate to ~5fps while camera still captures at 15fps internally.
+
+---
+
+## 12.2 — Interactive run script (replacing multiple run_*.sh files)
+
+Replaced `run.sh` (broken symlink) and three separate platform scripts with a single interactive selector:
+
+```sh
+./run.sh
+# Prompts:
+#   Select your board: 1) Pi4  2) Pi5
+#   Select your camera: 1) Pi Camera Module 3  2) Logitech C920
+# Then launches sensor service with correct config + boopbot
+```
+
+Old scripts moved to `backup_scripts/` for reference. `run.sh` is now a standalone interactive script, not a symlink.
+
+**Key differences per platform:**
+- Pi4 + PiCam: `-U 521:521`, config `/usr/etc/config/sensor/rpi4_camera_module3.conf`, sleep 3
+- Pi4 + C920: `-U 521:521`, config `/system/etc/config/sensor/u3v_camera.conf`, sleep 3
+- Pi5 + C920: `-U 521:521,1001`, config `/data/share/sensor/rpi5_usb_camera.conf`, sleep 5
+
+---
+
+## 12.3 — Photo booth feature design
+
+BOOPBOT is a community engagement photo booth for CUHacking 2026. Feature scope decided:
+
+**Implemented (no-network version):**
+1. CAPTURE FRAME button → 3...2...1 countdown overlay with scale animation
+2. Photo saved as JPEG to `/data/photos/boopbot_YYYYMMDD_HHMMSS.jpg` via `QImageWriter`
+3. Photo reveal: fullscreen 10s display with placeholder CUHacking border (top/bottom bars, corner accents)
+4. Photo wall: featured photo in left panel, scrollable thumbnail grid in right panel
+5. Last photo thumbnail with mini border in sidebar
+6. Tap anywhere on reveal to dismiss early, or wait 10s auto-dismiss
+
+**Deferred (network version — next session):**
+- QR code to connect to WiFi
+- QR code to download photo via HTTP server (`python3 -m http.server`)
+- Requires: stable IP, `qrencode` CLI tool, dedicated router at booth
+
+**Border design specs for designer:**
+- 640x480 PNG with transparent center (~560x400 transparent window)
+- Replace placeholder in QML with: `Image { anchors.fill: parent; source: "file:///data/border.png" }`
+
+---
+
+## 12.4 — Threading issue: QML cross-thread connection error
+
+**Symptom:**
+```
+QQmlEngine: Illegal attempt to connect to CameraWorker that is in a different
+thread than the QML engine
+Abort (core dumped)
+```
+
+**Root cause:** When new slots (`capturePhoto()`, `getPhotoList()`) were added to `CameraWorker` and called from QML, and the worker was on a separate QThread, QML tried to connect directly across thread boundaries — which QNX Qt rejects.
+
+**Fix:** Remove `QThread` entirely and run `CameraWorker` on the main thread. The sensor service callback already runs on its own internal thread; the mutex in `processFrame()` protects `m_frame` correctly. `camera_start_viewfinder` returns immediately and the callback is called by the sensor service's internal thread — no separate QThread needed.
+
+```cpp
+// main.cpp — simplified, no QThread
+CameraWorker* worker = new CameraWorker();
+engine.rootContext()->setContextProperty("cameraRelay", worker);
+engine.load(...);
+worker->start();  // called on main thread after QML loads
+return app.exec();
+```
+
+---
+
+## 12.5 — CMakeLists.txt: embedding QML as Qt resource
+
+**Problem:** After adding new C++ signals/slots, a clean rebuild hit:
+```
+QQmlApplicationEngine failed to load component
+qrc:/Main.qml: No such file or directory
+```
+
+**Root cause:** `Main.qml` wasn't registered as a Qt resource — cmake wasn't embedding it into the binary.
+
+**Fix:** Replace `qt_add_qml_module` (which failed with `CMake Error: System Error: Not a directory` on QNX) with `qt_add_resources`:
+
+```cmake
+qt_add_resources(boopbot "qml"
+    PREFIX "/"
+    FILES Main.qml
+)
+```
+
+Also requires a full clean rebuild when changing CMakeLists:
+```sh
+rm -f CMakeCache.txt
+rm -rf CMakeFiles .qt boopbot_autogen
+./build.sh
+```
+
+---
+
+## 12.6 — Photo path bug: `qrc:/data/photos/...` error
+
+**Symptom:**
+```
+QML Image: Cannot open: qrc:/data/photos/boopbot_20260702_031343.jpg
+```
+
+**Root cause:** `getPhotoList()` in `camera_provider.cpp` used `file://` (two slashes) instead of `file:///` (three slashes for absolute paths). QML prepended `qrc:` to the malformed path.
+
+**Fix:**
+```cpp
+// Wrong:
+fullPaths << QString("file://%1/%2").arg(m_photoDir).arg(f);
+// Correct:
+fullPaths << QString("file:///%1/%2").arg(m_photoDir).arg(f);
+```
+
+Also: `onPhotoCaptured(path)` in QML must prepend `file://` to the raw C++ path:
+```qml
+function onPhotoCaptured(path) {
+    root.capturedPhoto = "file://" + path
+    ...
+}
+```
+
+---
+
+## 12.7 — Photo wall layout fix
+
+**Problem:** Photo wall showed an empty left panel with a duplicate featured photo section in the right panel.
+
+**Root cause:** The wall state had no content assigned to the left camera feed area — the left panel only showed content during `live`/`countdown`/`reveal` states.
+
+**Fix:** Added a new `Item` in the left feed rectangle:
+```qml
+Item {
+    anchors.fill: parent
+    visible: root.appState === "wall"
+    Image { /* selected wall photo */ }
+    // border overlay items
+}
+```
+
+Removed the duplicate featured photo block from the right panel. Right panel now only contains the thumbnail grid + hint text.
+
+**Wall UX:**
+- Left panel: shows selected/featured photo with CUHacking border overlay
+- Right panel: 3-column thumbnail grid, tap to preview in left panel, double-tap for fullscreen reveal
+- `selectedWallPhoto` property auto-set to most recent photo when photo list updates
+
+---
+
+## 12.8 — New C++ API added to CameraWorker
+
+```cpp
+// New slots (callable from QML via cameraRelay)
+void capturePhoto();        // saves current frame as JPEG, emits photoCaptured + photoListChanged
+QStringList getPhotoList(); // returns file:/// paths of all photos, newest first
+
+// New signals
+void photoCaptured(const QString& path);         // emitted after successful save
+void photoListChanged(const QStringList& photos); // emitted when photo list changes
+```
+
+Photos saved to `/data/photos/` (18GB available, ~3600+ photos at 5MB each).
+Directory created automatically on startup via `QDir::mkpath()`.
+
+---
+
+## 12.9 — QML app states
+
+The app now has 4 states controlled by `root.appState`:
+
+| State | Left panel | Right panel |
+|-------|-----------|-------------|
+| `"live"` | Live camera feed | Capture button, photo wall button, camera status, last photo thumbnail |
+| `"countdown"` | Camera feed + countdown overlay (3→2→1) | Same as live but button shows "GET READY..." |
+| `"reveal"` | Captured photo + CUHacking border + "PHOTO TAKEN!" | Total count, "VIEW PHOTO WALL" button |
+| `"wall"` | Selected/featured photo with border | 3-col thumbnail grid, tap to select, double-tap to fullscreen |
+
+---
+
+## 12.10 — What's next (network version)
+
+Check availability on Pi5:
+```sh
+apk list --available | grep -iE "qrencode|qr"
+apk list --available | grep -iE "nginx|lighttpd|python.*http"
+python3 -m http.server --help 2>/dev/null
+```
+
+Plan:
+1. Start `python3 -m http.server 8080` serving `/data/photos/` in `run.sh`
+2. Get Pi's IP: `ifconfig bcm0 | grep inet`
+3. After photo capture, generate QR codes via `qrencode`:
+   - QR 1: WiFi SSID/password (shown first, "Connect to BOOPBOT WiFi")
+   - QR 2: Direct photo URL `http://<pi-ip>:8080/<filename>.jpg`
+4. Display QR codes in QML during reveal state using `Image { source: "file:///tmp/qr.png" }`
+5. Need: dedicated router/switch at booth for stable IP
+
+
+---
+
+# PART 13 — Boot Autostart, Fullscreen, Photo Save Fix (July 5, 2026)
+
+## Overview
+
+Session goals:
+1. Make BOOPBOT launch automatically on boot without manual interaction
+2. Fix fullscreen — app was windowed with QNX robot background visible
+3. Fix photo save permission denied error
+4. Fix VNC ZRLE/Rect too big crashes
+
+---
+
+## 13.1 — VNC stability fix
+
+VNC kept crashing with `ZRLE decode error`, `ZlibInStream: inflate failed`, and `Rect too big` errors. Root cause: TigerVNC 1.16.2 has issues with ZRLE compression when the camera feed generates rapid frame updates.
+
+**Fix — always connect with raw encoding:**
+```sh
+# On Fedora, connect with:
+vncviewer -PreferredEncoding raw anakafeelqnxpi5.local:5900
+
+# Make permanent:
+mkdir -p ~/.config/tigervnc
+echo "PreferredEncoding=raw" >> ~/.config/tigervnc/vncviewer.conf
+```
+
+Raw encoding bypasses ZRLE compression entirely, eliminating all decode errors. VNC looks choppier but is stable. This is not representative of how the app looks on a directly connected monitor at the hackathon.
+
+---
+
+## 13.2 — Photo save permission denied
+
+**Symptom:** CAMERA STATUS shows `Save failed: Cannot open device for writing: Permission denied`
+
+**Root cause:** `/data/photos/` either didn't exist or was owned by root. The app runs as `qnxuser` via the autolaunch script but couldn't write to a root-owned directory.
+
+**Fix:**
+```sh
+su root
+mkdir -p /data/photos
+chown -R qnxuser:qnxuser /data/photos
+chmod 775 /data/photos
+```
+
+---
+
+## 13.3 — Fullscreen fix
+
+**Symptom:** BOOPBOT launched in a small window (700x480) with the QNX robot background visible around it.
+
+**Fix — update `Main.qml` Window element:**
+```qml
+// Before:
+width: 700
+height: 480
+
+// After:
+width: Screen.width
+height: Screen.height
+visibility: Window.FullScreen
+```
+
+Also add to autolaunch environment:
+```sh
+export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
+```
+
+This removes the window title bar and chrome, making BOOPBOT truly fullscreen.
+
+---
+
+## 13.4 — Boot autostart investigation
+
+### Goal
+Have BOOPBOT launch automatically on every boot without any manual interaction (no clicking the welcome screen).
+
+### How QNX QSTI boots graphically
+
+The boot sequence on QSTI is:
+1. IFS (Image Filesystem) boots → kernel starts
+2. `/usr/etc/startup/post_startup.sh` runs as root — sets up hardware, VNC server, sensor service, etc.
+3. `/usr/etc/startup/full_startup.sh` runs — starts the Screen graphics stack, then `fullscreen-winmgr` and `demolauncher`
+4. `demolauncher` reads `/usr/etc/desktop_files/*.desktop` and shows the welcome screen
+5. User clicks a button → that button's `Exec` command runs
+
+### What we tried and what happened
+
+**Attempt 1 — `post_startup.sh` with `sudo`:**
+Added a block using `sudo -i -u qnxuser` to launch Weston + boopbot. Failed because `sudo` in a startup script context doesn't have a proper session and the background process died silently.
+
+**Attempt 2 — `post_startup.sh` with `su -l`:**
+Changed to `su -l qnxuser -c "..."`. The process showed in `pidin` but Weston/boopbot never appeared on screen because `su -l` from a non-login root context doesn't set up the display environment correctly.
+
+**Attempt 3 — `weston.ini` `[autolaunch]`:**
+Changed `/data/home/qnxuser/.config/weston.ini` autolaunch path from `xfce4-session` to `boopbot_autolaunch.sh`. This worked when Weston was already running (clicking Developer Desktop launched boopbot directly), but still required clicking Developer Desktop to start Weston first.
+
+**Attempt 4 — `full_startup.sh` (the correct file):**
+Found that `fullscreen-winmgr` and `demolauncher` are launched from `/usr/etc/startup/full_startup.sh`, not `post_startup.sh`. Commented out both and replaced with `su -m qnxuser -c boopbot_autolaunch.sh`. Result: black screen — `su -m` failed in this startup context too.
+
+**Root cause of all failures:**
+QNX startup scripts run in a very minimal environment — no TTY, no login session, no PAM. `su`, `sudo`, `su -l`, `su -m` all fail to properly switch user context in this environment.
+
+### What actually works (confirmed by checking `pidin`)
+
+When the autolaunch script is triggered via the demolauncher button click, it runs correctly because the demolauncher provides a proper user session context for `qnxuser`. The `su -m` approach in `full_startup.sh` never properly handed off to qnxuser.
+
+### What we decided
+
+**Accept the one-click.** The welcome screen now shows BOOPBOT with the CUHacking logo as the "Start Here" button. One click launches it fullscreen automatically. At the hackathon, an attendant can click it on startup, or the Pi can be left running all day.
+
+This is a reasonable tradeoff:
+- The underlying issue is that QNX startup scripts can't properly `su` to another user for graphical sessions
+- Bypassing demolauncher entirely would require rebuilding the IFS image (not feasible without the CTI build tools)
+- The one-click is fast and reliable
+
+---
+
+## 13.5 — Desktop file customization
+
+Customized `/usr/etc/desktop_files/qnx_dev_desktop.desktop` to show BOOPBOT branding on the welcome screen:
+
+```ini
+[Desktop Entry]
+Name=BOOPBOT
+Exec=/data/home/qnxuser/boopbot_autolaunch.sh
+Icon=/data/home/qnxuser/boopbot/icon_purple.png
+Singleton=Y
+Categories=Utilities
+```
+
+This replaced the generic "Developer Desktop" button with a BOOPBOT branded button showing the CUHacking keycap logo.
+
+---
+
+## 13.6 — boopbot_autolaunch.sh (final working version)
+
+```sh
+#!/bin/bash
+export XDG_RUNTIME_DIR=/var/run/user/$(id -u)
+export XKB_CONFIG_ROOT=/usr/share/X11/xkb
+export XDG_SESSION_TYPE=wayland
+export QT_QPA_PLATFORM=wayland
+export SDL_VIDEODRIVER=wayland
+export GDK_BACKEND=wayland
+export LD_LIBRARY_PATH=/usr/lib:$LD_LIBRARY_PATH
+export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
+
+# Start Weston
+dbus-run-session -- /usr/bin/weston --fullscreen &
+sleep 5
+
+# Start sensor service
+slay sensor 2>/dev/null || true
+sensor -U 521:521,1001 -b external -r /data/share/sensor \
+       -c /data/share/sensor/rpi5_usb_camera.conf &
+sleep 5
+
+# Launch boopbot fullscreen
+export WAYLAND_DISPLAY=wayland-1
+cd /data/home/qnxuser/boopbot
+./boopbot
+```
+
+This script is invoked by clicking the BOOPBOT button on the welcome screen. It:
+1. Sets up the Wayland environment
+2. Starts Weston fullscreen
+3. Starts the sensor service for the C920 USB camera
+4. Launches boopbot (which opens fullscreen via `Window.FullScreen`)
+
+---
+
+## 13.7 — Key files modified today
+
+| File | Change |
+|------|--------|
+| `/usr/etc/startup/full_startup.sh` | Reverted to original (demolauncher restored) after black screen |
+| `/usr/etc/startup/post_startup.sh` | Reverted to clean state (no boopbot block) |
+| `/usr/etc/desktop_files/qnx_dev_desktop.desktop` | BOOPBOT branding + autolaunch script as Exec |
+| `/data/home/qnxuser/.config/weston.ini` | Reverted to xfce4-session autolaunch |
+| `Main.qml` | `Screen.width/height` + `Window.FullScreen` |
+| `/data/photos/` | Created, owned by qnxuser |
+| `/data/home/qnxuser/boopbot_autolaunch.sh` | Final working launch script |
+
+---
+
+## 13.8 — Startup sequence (current working state)
+
+1. Pi boots → QNX welcome screen appears with BOOPBOT button
+2. Click BOOPBOT → `boopbot_autolaunch.sh` runs as qnxuser
+3. Weston starts fullscreen → sensor service starts → boopbot launches
+4. BOOPBOT fills entire screen, camera streaming, photo booth ready
+5. Photos save to `/data/photos/` (owned by qnxuser, 18GB available)
+

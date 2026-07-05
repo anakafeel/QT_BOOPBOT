@@ -4,8 +4,9 @@ import QtQuick.Controls
 
 Window {
     id: root
-    width: 700
-    height: 480
+    width: Screen.width
+    height: Screen.height
+    visibility: Window.FullScreen
     visible: true
     title: "BOOPBOT"
     color: "#12091e"
