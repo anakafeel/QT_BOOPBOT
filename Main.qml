@@ -567,6 +567,64 @@ Window {
                     }
                 }
 
+                //HARDWARE STATUS panel -NAIMA
+                Rectangle { width: parent.width; height: 1; color: "#3b1f6e" }
+                Text {
+                    text: "BOOPBOT STATUS"
+                    color: "#a78bfa"
+                    font.family: "monospace"
+                    font.pixelSize: 11
+                    font.letterSpacing: 3
+                    opacity: 0.7
+                }
+
+                Grid{
+                    id: hardwareinforGrid
+                    width: parent.width
+                    height: 60
+                    columns: 3
+                    rows: 2
+                    spacing: 4
+                    property bool isReady: true
+
+                    Rectangle{
+                        width: (hardwareGrid.width - 8) / 3
+                        height: 35
+                        color: "#0a0618"
+                        border.color: "#3b1f6e"
+                        border.width: 1
+                        radius: 2
+                    }
+                    Column {
+                        anchors.centerIn: parent
+                        spacing: 1
+                        Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: "POWER"
+                            color: "#4c1d95"
+                            font.family: "monospace"
+                            font.pixelSize: 7
+                            font.letterSpacing: 1
+                        }
+                        Row {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            spacing: 4
+                            Rectangle {
+                                width: 6; height: 6; radius: 3
+                                color: "#22c55e"  // Green = good
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            Text {
+                                text: "87%"
+                                color: "#8b5cf6"
+                                font.family: "monospace"
+                                font.pixelSize: 9
+                                font.bold: true
+                            }
+                        }   
+                    } 
+                }
+                // Existing
                 Rectangle { width: parent.width; height: 1; color: "#3b1f6e" }
 
                 Text {
