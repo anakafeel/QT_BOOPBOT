@@ -2619,3 +2619,218 @@ This script is invoked by clicking the BOOPBOT button on the welcome screen. It:
 4. BOOPBOT fills entire screen, camera streaming, photo booth ready
 5. Photos save to `/data/photos/` (owned by qnxuser, 18GB available)
 
+
+---
+
+# PART 14 — ROS2 Bridge, Screensaver Fix, Watchdog (July 5, 2026)
+
+## Overview
+
+Session goals:
+1. Subscribe to ROS2 topics from other robot Pis and display data in BOOPBOT UI
+2. Fix screen going to sleep during hackathon (screensaver/idle timeout)
+3. Auto-restart BOOPBOT if it crashes mid-hackathon (watchdog)
+4. Fix VNC "Rect too big" crash permanently
+
+---
+
+## 14.1 — VNC "Rect too big" permanent fix
+
+The "Rect too big" error is a known VNC protocol flaw triggered when auto-select encoding is active and the framebuffer geometry changes. The fix per official docs is disabling AutoSelect.
+
+**Permanent fix on Fedora:**
+```sh
+mkdir -p ~/.config/tigervnc
+cat > ~/.config/tigervnc/vncviewer.conf << 'EOF'
+AutoSelect=0
+PreferredEncoding=raw
+FullColour=1
+EOF
+```
+
+Then just run `vncviewer anakafeelqnxpi5.local:5900` with no flags.
+
+---
+
+## 14.2 — ROS2 integration architecture decision
+
+**Goal:** Subscribe to ROS2 topics from the drivetrain Pi and other robot nodes, display bot status, battery, speed, and diagnostics in BOOPBOT's Qt UI.
+
+**Approach considered — embed rclcpp directly in Qt app:**
+Tried linking `rclcpp` directly into the boopbot Qt CMake project. Failed with multiple errors:
+- `No module named 'ament_package'` — Python path not set
+- `No 'rosidl_typesupport_c' found` — ament cmake chain broken outside colcon
+- `rcl_interfaces/srv/list_parameters.hpp not found` — include paths incomplete
+
+**Root cause:** Qt6 uses standard cmake, ROS2 uses ament_cmake — they have conflicting cmake systems. The Qt Forum community consensus is "don't do this, keep them separate."
+
+**Chosen approach — separate Python bridge process + Unix socket:**
+```
+Other ROS2 Pis (Ubuntu)  →  ros2_bridge.py (Python, same Pi5)  →  Unix socket  →  BOOPBOT Qt app
+      publishes topics          subscribes via rclpy                /tmp/boopbot_bridge.sock    QLocalSocket reads JSON
+```
+
+This is clean, decoupled, and uses Qt's built-in `QLocalSocket` — no cmake conflicts, no extra dependencies.
+
+---
+
+## 14.3 — ROS2 bridge Python script (`ros2_bridge.py`)
+
+Located at `/data/home/qnxuser/ros2_bridge.py`
+
+**What it does:**
+- Creates a Unix domain socket at `/tmp/boopbot_bridge.sock`
+- Waits for BOOPBOT to connect
+- Subscribes to 4 ROS2 topics
+- Forwards each message as a JSON line to the socket
+
+**Topics subscribed:**
+
+| Topic | Type | Purpose |
+|-------|------|---------|
+| `/bot_status` | `std_msgs/msg/String` | Moving/stopped/error |
+| `/battery_level` | `std_msgs/msg/Float32` | 0.0–100.0% |
+| `/cmd_vel` | `geometry_msgs/msg/Twist` | Linear speed (m/s) |
+| `/bot_diagnostics` | `std_msgs/msg/String` | Custom status messages |
+
+**What to tell teammates (topic contract):**
+They just need to publish on these topic names from their Pi on the same network. ROS2 DDS handles discovery automatically — no IP config needed.
+
+**To run the bridge:**
+```sh
+source /opt/ros/jazzy/setup.bash
+export PYTHONPATH=/opt/ros/jazzy/lib/python3.14/site-packages:$PYTHONPATH
+python3 /data/home/qnxuser/ros2_bridge.py
+```
+
+**To test without teammates (simulate their Pi):**
+```sh
+source /opt/ros/jazzy/setup.bash
+ros2 topic pub /bot_status std_msgs/msg/String "data: 'moving'" --once
+ros2 topic pub /battery_level std_msgs/msg/Float32 "data: 75.5" --once
+ros2 topic pub /bot_diagnostics std_msgs/msg/String "data: 'All systems nominal'" --once
+```
+
+**Confirmed working:** Bridge receives messages and forwards to BOOPBOT socket.
+
+---
+
+## 14.4 — Qt RosBridge class (`ros_bridge.h/cpp`)
+
+A `QObject` subclass that reads from the Unix socket and exposes data to QML via `Q_PROPERTY` and signals.
+
+**Properties exposed to QML:**
+```cpp
+Q_PROPERTY(QString botStatus   READ botStatus   NOTIFY botStatusChanged)
+Q_PROPERTY(float   battery     READ battery     NOTIFY batteryChanged)
+Q_PROPERTY(float   speed       READ speed       NOTIFY speedChanged)
+Q_PROPERTY(QString diagnostics READ diagnostics NOTIFY diagnosticsChanged)
+Q_PROPERTY(bool    connected   READ connected   NOTIFY connectedChanged)
+```
+
+**How it works:**
+1. `QLocalSocket` connects to `/tmp/boopbot_bridge.sock`
+2. Auto-retries every 2 seconds if bridge not running yet
+3. Reads newline-delimited JSON from socket
+4. Parses JSON and emits appropriate signal
+5. QML binds directly to properties — UI updates automatically
+
+**QML usage (when teammate adds UI):**
+```qml
+Text { text: rosBridge.botStatus }
+Text { text: rosBridge.battery + "%" }
+Text { text: rosBridge.speed + " m/s" }
+Text { text: rosBridge.diagnostics }
+// Show connected indicator:
+Rectangle { color: rosBridge.connected ? "#22c55e" : "#ef4444" }
+```
+
+**Why signals and slots:** Qt's signal/slot system handles cross-thread safety automatically. The socket read happens on the main thread via Qt's event loop — no manual mutex needed.
+
+---
+
+## 14.5 — ROS2 environment issues on QNX
+
+**Problem:** `/opt/ros/jazzy/setup.sh` contains a hardcoded build path:
+```
+The build time path "/var/home/dae/workspace/aports/..." doesn't exist
+```
+This is a packaging artifact from how ROS2 Jazzy was built for QNX via apk. The setup.sh is broken.
+
+**Fix — manually set environment variables:**
+```sh
+export AMENT_PREFIX_PATH=/opt/ros/jazzy
+export CMAKE_PREFIX_PATH=/opt/ros/jazzy
+export LD_LIBRARY_PATH=/opt/ros/jazzy/lib:$LD_LIBRARY_PATH
+export PYTHONPATH=/opt/ros/jazzy/lib/python3.14/site-packages:$PYTHONPATH
+export ROS_DISTRO=jazzy
+export ROS_VERSION=2
+export COLCON_CURRENT_PREFIX=/opt/ros/jazzy
+```
+
+These are now set in `build.sh` before cmake runs.
+
+**Note:** For running ROS2 tools (ros2 topic pub, ros2 topic list etc), just sourcing setup.bash works despite the warning — the warning is non-fatal for runtime use.
+
+---
+
+## 14.6 — Screensaver/idle timeout fix
+
+**Problem:** Weston defaults to a 300-second idle timeout — screen goes black at the hackathon.
+
+**Fix 1 — weston.ini:**
+```ini
+[core]
+idle-time=0
+```
+Added to `/data/home/qnxuser/.config/weston.ini`
+
+**Fix 2 — Weston launch flag (takes precedence over weston.ini per docs):**
+Updated `boopbot_autolaunch.sh`:
+```sh
+dbus-run-session -- /usr/bin/weston --fullscreen --idle-time=0 &
+```
+
+`--idle-time=0` disables the idle timeout completely.
+
+---
+
+## 14.7 — Watchdog auto-restart
+
+**Problem:** If BOOPBOT crashes at the hackathon, the screen goes black and there's no way to restart without rebooting.
+
+**Fix — watchdog loop in `boopbot_autolaunch.sh`:**
+```sh
+while true; do
+    echo "[watchdog] Starting boopbot..."
+    ./boopbot
+    EXIT_CODE=$?
+    echo "[watchdog] BOOPBOT exited with code $EXIT_CODE — restarting in 3s..."
+    sleep 3
+done
+```
+
+BOOPBOT now automatically restarts within 3 seconds of any crash. No reboot needed, no manual intervention.
+
+---
+
+## 14.8 — Complete startup sequence (current state)
+
+On every boot:
+1. Pi boots → QNX welcome screen
+2. Click BOOPBOT button → `boopbot_autolaunch.sh` runs
+3. Weston starts fullscreen with `--idle-time=0` (no screensaver)
+4. Sensor service starts for C920 USB camera
+5. BOOPBOT launches fullscreen via watchdog loop
+6. **Separately:** Run `ros2_bridge.py` in an SSH terminal to enable ROS2 data
+7. BOOPBOT auto-connects to bridge socket within 2 seconds
+8. ROS2 topic data flows into BOOPBOT UI properties
+
+---
+
+## 14.9 — What's pending
+
+- **UI panel for ROS2 data** — teammate is building this as their first PR. Props exposed to QML: `rosBridge.botStatus`, `rosBridge.battery`, `rosBridge.speed`, `rosBridge.diagnostics`, `rosBridge.connected`
+- **Auto-start ros2_bridge.py** — currently needs manual SSH to start. Should be added to `boopbot_autolaunch.sh` once confirmed stable with teammates' topics
+- **Network QR code** — deferred from earlier session, still a potential addition
+
