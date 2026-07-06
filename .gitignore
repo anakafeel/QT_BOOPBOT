@@ -14,3 +14,11 @@ boopbot
 # Core dumps
 *.core
 cores/
+AMENT_IGNORE
+CTestConfiguration.ini
+CTestCustom.cmake
+CTestTestfile.cmake
+ament_cmake_core/
+ament_cmake_package_templates/
+ament_cmake_uninstall_target/
+meta_types/
