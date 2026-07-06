@@ -578,39 +578,95 @@ Window {
                     opacity: 0.7
                 }
 
-                Grid{
+                // ROS2 connection indicator
+                Rectangle {
                     width: parent.width
-                    height: 60
-                    columns: 3
-                    rows: 2
-                    spacing: 4
-
-                    Repeater {
-                        model: [
-                            "POWER", "TEMP", "WIFI",
-                            "DIST", "MOTOR", "SYSTEM"
-                        ]
-
+                    height: 20
+                    color: rosBridge.connected ? "#0d2b1a" : "#1a0f0f"
+                    border.color: rosBridge.connected ? "#22c55e" : "#ef4444"
+                    border.width: 1
+                    radius: 2
+                    Row {
+                        anchors.centerIn: parent
+                        spacing: 6
                         Rectangle {
-                            width: (parent.width - 8) / 3
-                            height: 30
-                            color: "#0a0618"
-                            border.color: "#3b1f6e"
-                            border.width: 1
-                            radius: 2
+                            width: 6; height: 6; radius: 3
+                            color: rosBridge.connected ? "#22c55e" : "#ef4444"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
                         Text {
-                            anchors.centerIn: parent
-                            text: modelData
-                            color: "#4c1d95"
+                            text: rosBridge.connected ? "ROS2 CONNECTED" : "ROS2 OFFLINE"
+                            color: rosBridge.connected ? "#22c55e" : "#ef4444"
                             font.family: "monospace"
                             font.pixelSize: 8
-                            font.letterSpacing: 1
                             font.bold: true
+                            anchors.verticalCenter: parent.verticalCenter
                         }
                     }
                 }
-            }
-
+                Grid {
+                    width: parent.width
+                    height: 80
+                    columns: 3
+                    rows: 2
+                    spacing: 4
+                    Rectangle {
+                        width: (parent.width - 8) / 3
+                        height: 35
+                        color: "#0a0618"
+                        border.color: "#3b1f6e"
+                        border.width: 1
+                        radius: 2
+                        Column {
+                            anchors.centerIn: parent
+                            spacing: 1
+                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "POWER"; color: "#4c1d95"; font.family: "monospace"; font.pixelSize: 7; font.bold: true }
+                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: rosBridge.battery.toFixed(0) + "%"; color: "#a78bfa"; font.family: "monospace"; font.pixelSize: 9; font.bold: true }
+                        }
+                    }
+                    Rectangle {
+                        width: (parent.width - 8) / 3
+                        height: 35
+                        color: "#0a0618"
+                        border.color: "#3b1f6e"
+                        border.width: 1
+                        radius: 2
+                        Column {
+                            anchors.centerIn: parent
+                            spacing: 1
+                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "STATUS"; color: "#4c1d95"; font.family: "monospace"; font.pixelSize: 7; font.bold: true }
+                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: rosBridge.botStatus; color: "#a78bfa"; font.family: "monospace"; font.pixelSize: 9; font.bold: true }
+                        }
+                    }
+                    Rectangle {
+                        width: (parent.width - 8) / 3
+                        height: 35
+                        color: "#0a0618"
+                        border.color: "#3b1f6e"
+                        border.width: 1
+                        radius: 2
+                        Column {
+                            anchors.centerIn: parent
+                            spacing: 1
+                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "SPEED"; color: "#4c1d95"; font.family: "monospace"; font.pixelSize: 7; font.bold: true }
+                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: rosBridge.speed.toFixed(2) + "m/s"; color: "#a78bfa"; font.family: "monospace"; font.pixelSize: 9; font.bold: true }
+                        }
+                    }
+                    Rectangle {
+                        width: parent.width - 2
+                        height: 35
+                        color: "#0a0618"
+                        border.color: "#3b1f6e"
+                        border.width: 1
+                        radius: 2
+                        Column {
+                            anchors.centerIn: parent
+                            spacing: 1
+                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "DIAG"; color: "#4c1d95"; font.family: "monospace"; font.pixelSize: 7; font.bold: true }
+                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: rosBridge.diagnostics; color: "#a78bfa"; font.family: "monospace"; font.pixelSize: 8 }
+                        }
+                    }
+                }
             Rectangle { width: parent.width; height: 1; color: "#3b1f6e" }
                         
                 // Existing
