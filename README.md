@@ -17,10 +17,10 @@ Built for **cuHacking 2026** (July 10–12, Carleton University).
 ![Wayland](https://img.shields.io/badge/Wayland-Weston-FFBC00?style=flat-square)
 
 <a href=".github/assets/boopbot-demo.mp4">
-  <img src=".github/assets/boopbot-demo.jpg" width="720" alt="BOOPBOT demo video: click to play" />
+  <img src=".github/assets/boopbot-demo.gif" width="720" alt="BOOPBOT demo video: click to play" />
 </a>
 
-<sub>▶ Click the thumbnail to watch the 20-second demo.</sub>
+<sub>Silent preview. Click it for the full video with sound (MP4).</sub>
 
 </div>
 
